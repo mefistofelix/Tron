@@ -17,9 +17,9 @@ The canonical implementation is intentionally dependency-light and centered on `
 - The camera defaults to a useful chase view that shows the player’s own bike and enough surrounding space. Additional close and top-down cameras may remain available.
 - The game is continuous. A crash never ends the session merely because only one or zero opponents remain.
 - Solo with the AI slider at zero remains fully playable forever.
-- Desktop controls: Left/Right or A/D to steer, Down/Space/S to brake, C to change camera, Escape to pause.
+- Desktop controls: Left/Right or A/D to steer, Down/Space/S to brake, C to change camera, and T to open chat. Enter sends; Escape cancels chat or closes Settings.
 - Mobile controls: translucent circular left, right, and brake buttons positioned as overlays without covering critical play space.
-- Pause is authoritative and shared with every connected player.
+- Gameplay never exposes a pause action. Solo and online simulations continue while the page is active.
 - The PWA remains installable with manifest, favicon/app icon, service worker, standalone display, and mobile safe-area support.
 
 ## Movement and Armagetron-style dynamics
@@ -76,13 +76,15 @@ The canonical implementation is intentionally dependency-light and centered on `
 
 - The top-left HUD shows speed, brake energy, and rubber.
 - The top-right leaderboard lists all active human and AI riders with a miniature bike, color, name, state, and survival score.
-- The local rider row is clearly highlighted and labeled “TU”.
-- Names are generated automatically from short neon/computer-themed word pairs, saved locally, limited to 18 characters, and editable in real time from the leaderboard or multiplayer dialog.
+- The local rider row is clearly highlighted and labeled “YOU”.
+- Names are generated automatically from short neon/computer-themed word pairs, saved locally, limited to 18 characters, and editable from Settings.
 - Human connection state and AI state must be distinguishable.
 - The leaderboard must remain compact at mobile widths and must not collide with touch controls.
 - A north-up minimap sits at bottom-right, centered on the local bike, and shows a relatively wide roughly 230-unit square of the world-fixed grid, nearby finalized/active walls, every live bike in its rider color, and a highlighted local marker. It updates at a restrained rate and uses cheap bounds culling so indefinite wall growth does not add unnecessary per-frame work.
 - On touch/mobile layouts the minimap moves above the steering controls instead of overlapping them.
-- Online play exposes a persistent “Copia invito” action beneath the leaderboard header and a direct “Invita” action in the top bar. Both copy the current page URL; users never need to see or type a room ID.
+- The leaderboard contains only rider information; name editing and invitation copying never appear there because Settings and the toolbar already own those actions.
+- Online play exposes a direct Invite icon in the top-right toolbar. It copies the current page URL; users never need to see or type a room ID.
+- A compact mini-chat sits below the left-side stats. T opens writing, Enter sends, and Escape cancels. It displays at most the latest six messages and each fades away over roughly nine seconds. Chat is available in solo and multiplayer; online messages are host-relayed, sender identity/color is normalized by the host, and text is whitespace-normalized and capped at 96 characters.
 
 ## Multiplayer and rooms
 
@@ -93,9 +95,10 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Every gameplay room has its own sanitized internal ID. Public IDs are generated as `PUB-XXXXXX`; private IDs are generated as high-entropy `PRI-XXXXXXXXXX` values. The active ID lives in the current page URL fragment and is not presented as a user-facing field.
 - Public and private rooms use the same host-authoritative gameplay transport. Their only product-level difference is discoverability: public rooms are advertised to random riders, while private rooms are unlisted and require their ID or invitation link.
 - Public matchmaking uses a separate, fixed Trystero/Nostr directory rendezvous room. Public hosts send only short-lived advertisements containing room ID, connected-player count, capacity, and free slots. The directory stores no gameplay state and has no persistent database.
-- “Trova partita” joins an advertised public room with a free slot, or creates a fresh uniquely identified public room when none answers. A stale full-room result automatically resumes matchmaking.
-- “Nuova pubblica” always generates a new public room. Creating, finding, or joining any room immediately updates the current URL with its fragment. Copying the current URL is the complete reusable invitation; opening it auto-joins without manual input.
-- The main-menu “Partita pubblica” button immediately starts public matchmaking in one action. The top `∞` control opens the full public/private room chooser.
+- “Find match” joins an advertised public room with a free slot, or creates a fresh uniquely identified public room when none answers. A stale full-room result automatically resumes matchmaking.
+- Creating, finding, or joining any room immediately updates the current URL with its fragment. Copying the current URL is the complete reusable invitation; opening it auto-joins without manual input.
+- The main menu keeps two direct calls to action: “Play now” starts solo immediately and “Play online” starts the last saved public/private flow immediately. Play online shows an inline spinner and is disabled only while discovery and connection are pending.
+- Settings is a non-modal dropdown aligned below the rightmost toolbar icon. It contains rider name, public/private toggle, AI count, maximum humans, music toggle, online start action, install action, and connection status. It has no redundant close button: clicking outside or pressing Escape closes it.
 - Private rooms are created with one hidden high-entropy ID and one reusable fragment invitation URL; there is no editable ID, second key, or password field. Opening either a public or private invitation URL joins the intended room without a return-link exchange.
 - Maximum human count is controlled by the host’s slider, currently 2–6. Excess riders receive a clear “room full” state.
 - If no host is found after a short discovery window, the local peer becomes host. Simultaneous hosts resolve deterministically by peer ID. If a host leaves, remaining peers attempt a deterministic re-election; resetting the authoritative round during migration is acceptable, but the room must remain usable.
@@ -105,6 +108,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 ## AI population controls
 
 - AI count is adjustable live from 0 through 6.
+- A newly created public match starts with zero AI by default; the public host may add AI live afterward. Solo and private rooms retain the device-local saved AI preference.
 - Removing AI removes its cycles and walls immediately, updates the leaderboard, and leaves `state.running` true.
 - Adding AI spawns it safely near the human cluster.
 - In network play the host owns the AI count and sends the resulting state to guests.
@@ -114,9 +118,9 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Audio is synthesized with Web Audio: engine, higher-frequency whine, acceleration/grind pitch, turns, sparks/crash noise, and restrained electronic background music.
 - Speed and wall proximity raise engine/whine pitch smoothly.
 - Motor, high-frequency whine, turn cues, sparks, and crash noise feed a short 180 ms Web Audio delay with restrained feedback and return gain. Background music stays dry so the mix remains readable.
-- The original audio lifecycle is retained: solo simulation pauses automatically when its document becomes hidden, while the browser owns the Web Audio context lifecycle for a closed tab.
+- The browser owns the Web Audio context lifecycle for hidden or closed tabs; the game does not create a gameplay pause around visibility changes.
 - Do not add unload, forced suspension, or audio-context shutdown logic solely to compensate for another still-open browser tab.
-- Mute preference is device-local.
+- Mute preference is device-local. Music has a separate device-local toggle and a dedicated dry mix bus; it uses a more audible phone-friendly bass/arp sequence without feeding the motor echo.
 
 ## Visual and interaction rules
 
@@ -125,14 +129,15 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Avoid visual effects above floor level that could be confused with walls or bikes.
 - Menus use crisp geometric panels, thin borders, compact uppercase labels, and no rounded dashboard-card aesthetic.
 - Preserve keyboard accessibility labels and visible focus styling.
-- The top-right bar uses recognizable line icons, explicit desktop labels, accessible names, and concise hover/focus tooltips for multiplayer, direct invitation copying, shared pause, audio, and settings. “Settings” is always the rightmost control; the bar collapses to compact icon-only controls on narrow screens.
-- Device-local preferences persist across sessions: rider name, AI count, maximum humans, camera mode, mute state, and the last public/private panel. Authoritative settings received as a guest must not overwrite these personal saved defaults.
+- The top-right toolbar contains exactly four compact, recognizable line icons in this order: Invite, Find match, Audio, Settings. All have accessible names and concise hover/focus tooltips; Settings is rightmost. There is no redundant brand, pause, name edit, or invite action elsewhere in the HUD.
+- All user-facing interface copy is English. Technical implementation details such as “single HTML file” never appear as marketing copy in the game UI.
+- Device-local preferences persist across sessions: rider name, AI count, maximum humans, camera mode, mute state, music state, and the last public/private flow. Authoritative settings received as a guest must not overwrite these personal saved defaults.
 
 ## Networking and safety invariants
 
 - Only the authoritative host calls the simulation step for a network room.
 - Guest input messages are routed to the elected host, not broadcast as authoritative state.
-- Host snapshots include names, colors, human/AI flags, position, direction, speed, meters, alive state, trail endpoints, death/respawn timing, invulnerability, scores, walls, pause state, AI count, and human limit.
+- Host snapshots include names, colors, human/AI flags, position, direction, speed, meters, alive state, trail endpoints, death/respawn timing, invulnerability, scores, walls, AI count, and human limit. Initial state also carries the recent chat buffer.
 - A guest accepts authoritative state only from the elected host.
 - Names and room codes are sanitized and length-limited before entering state or the DOM.
 
@@ -152,8 +157,10 @@ Before publishing any gameplay change:
 10. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
 11. With independent browser contexts/devices, confirm public matchmaking finds an advertised room, distinct invitation fragments stay isolated, copies of the same current URL connect peers, public/private invitation links auto-join, and private rooms never appear in public matchmaking.
 12. Check desktop around 1440×900 and mobile around 390×844, including touch controls and leaderboard.
-13. Check browser console for errors, manifest/icon/service-worker endpoints, audio behavior across play/pause/menu/tab visibility, and that the echo feedback remains restrained without runaway buildup.
-14. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
+13. Verify Play now starts immediately, Play online shows loading feedback then enters the grid, Settings opens only from its icon, and the toolbar is aligned top-right.
+14. Press T, send with Enter, cancel with Escape, confirm gameplay keys are blocked while typing, and verify the six-message/fade limit in solo and between peers.
+15. Check browser console for errors, manifest/icon/service-worker endpoints, music and audio toggles, menu/tab visibility behavior, and that echo feedback remains restrained without runaway buildup.
+16. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
 
 ## Maintenance rule
 

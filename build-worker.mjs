@@ -4,7 +4,7 @@ const html = await readFile(new URL('./index.html', import.meta.url), 'utf8');
 const manifest = JSON.stringify({
   name: 'GRID//∞ — Lightcycle Arena',
   short_name: 'GRID//∞',
-  description: 'Arena 3D P2P di lightcycle',
+  description: 'A 3D P2P lightcycle arena',
   id: '/',
   start_url: '/',
   scope: '/',
@@ -15,7 +15,7 @@ const manifest = JSON.stringify({
   icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }],
 });
 const icon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#05070a"/><path d="M96 344V168h232v64H176v48h240v64z" fill="#31ecff"/><path d="M334 168h82v64h-82z" fill="#ff3da8"/></svg>';
-const sw = 'const C="grid-infinito-v4";self.addEventListener("install",e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(["/","/manifest.webmanifest","/icon.svg"]))) });self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))).then(()=>clients.claim())));self.addEventListener("fetch",e=>{if(e.request.method!=="GET")return;e.respondWith(fetch(e.request).then(r=>{const q=r.clone();caches.open(C).then(c=>c.put(e.request,q));return r}).catch(()=>caches.match(e.request))) });';
+const sw = 'const C="grid-infinity-v8";self.addEventListener("install",e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(["/","/manifest.webmanifest","/icon.svg"]))) });self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))).then(()=>clients.claim())));self.addEventListener("fetch",e=>{if(e.request.method!=="GET")return;e.respondWith(fetch(e.request).then(r=>{const q=r.clone();caches.open(C).then(c=>c.put(e.request,q));return r}).catch(()=>caches.match(e.request))) });';
 
 const worker = `const HTML=${JSON.stringify(html)};
 const MANIFEST=${JSON.stringify(manifest)};
