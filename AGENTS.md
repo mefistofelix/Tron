@@ -51,6 +51,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 ## Trails, corners, and crashes
 
 - A trail segment reaches the exact turn point. Adjacent segments share their endpoint, so the single central translucent wall surfaces meet without a visual or collision gap at a 90-degree corner. Do not render two parallel wall faces: from above that reads as an incorrect double trail.
+- Each segment created after a turn retains the incoming direction and exact entry vertex of that corner. When a rider later travels along its own preceding segment toward the same continuous corner, the collision test treats only the first `0.025` world units around that shared mathematical vertex as a half-open endpoint. This prevents an inclusive endpoint from snagging a bike that is merely skimming its own continuous wall. The exception applies only to the owner, only while moving in the recorded incoming direction, and only at that entry vertex; the rest of both lines, other riders’ corners, T-junctions, and genuine perpendicular crossings remain solid.
 - The active trail ends at the bike point. A rider’s own finalized trails are fully solid. Collision code exempts only the exact wall ID created at the latest turn and only for the first roughly 0.12 world units leaving that junction; it must never use a generic “ignore any nearby own wall” rule.
 - Trail-wall height matches the visual bike height: approximately 1.48 world units, not a tall building-sized barrier.
 - Walls are slightly transparent, luminous, readable, and never mistaken for the floor circuitry.
@@ -172,22 +173,23 @@ Before publishing any gameplay change:
 1. Parse the inline script with Node (`new Function`) and run `git diff --check`.
 2. Verify solo with 0 AI remains active after crashes and respawns.
 3. Drive repeated left/right squares and confirm there are no corner gaps.
-4. Observe multiple AI for several minutes and confirm none crosses a wall.
-5. Construct two extremely close parallel trails and confirm a bike point can traverse any positive-width corridor between them without collision.
-6. Observe AI near a human: straight runs should dominate, turns must not chatter, and occasional predicted-route cuts should be visible without direct ramming.
-7. Confirm wall height visually matches the bike.
-8. Confirm grid lines remain fixed relative to old walls while crossing several major cells.
-9. Confirm electrical paths are fixed, pulses move quickly through their 90-degree turns, and the start-screen background animates.
-10. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
-11. With independent browser contexts/devices, leave one public room open, start Play online from a second context after a delayed discovery interval, and confirm the second rider joins that existing room rather than creating another. Also confirm distinct invitation fragments stay isolated, copies of the same current URL connect peers, public/private invitation links auto-join, and private rooms never appear in public matchmaking. Add several AI to a room and verify that neither its advertised population nor its ranking against other rooms changes; ranking must follow only the number of connected humans including each host.
-12. Check desktop around 1440×900 and mobile around 390×844. On touch, verify left/right steering everywhere outside the centered brake rectangle, held braking only inside the centered 38% of the bottom 17%, zero visible control overlays, the higher stats position, lower minimap, Camera/Riders/Chat toolbar toggles, Settings, chat, and leaderboard touch isolation.
-13. Verify Play now starts immediately, Play online shows loading feedback then enters the grid, Settings opens only from its icon, and the toolbar is aligned top-right.
-14. Open chat with T and with the toolbar icon, send with Enter, cancel with Escape or the icon, confirm gameplay keys are blocked while typing, and verify the six-message/fade limit in solo and between peers.
-15. Join and leave with a second human peer: verify the Riders badge includes the local rider, excludes every AI, changes in real time, and both presence events appear as fading `GRID` messages. Crash one human into another human’s trail and then into an AI-owned trail; verify exactly the respective trail owner receives one point. Repeat with an AI victim, a self-trail crash, and an unrelated crash and verify none changes any score.
-16. Check browser console for errors, manifest/icon/service-worker endpoints, music and audio toggles, menu/tab visibility behavior, and that echo feedback remains restrained without runaway buildup.
-17. At base and maximum speed, rapidly turn as solo, host, and guest. Guest visuals must turn immediately, acknowledged prediction must disappear without a double trail or snap, and bounded host reconciliation must not create false crashes. Accumulate high rubber against one wall, travel clear and then alongside another trail, and confirm stress recovers rather than causing an unrelated death.
-18. With a long-running arena containing thousands of walls, confirm input response remains immediate and collision rays do not allocate a copied all-walls array for every probe.
-19. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
+4. Revisit an own 90-degree corner while grinding parallel to its incoming segment: pass within and just outside the `0.025` endpoint tolerance and confirm the shared vertex does not cause a false crash, while the perpendicular segment immediately beyond that micro-tolerance, the same corner owned by another rider, and a mid-segment crossing all still collide.
+5. Observe multiple AI for several minutes and confirm none crosses a wall.
+6. Construct two extremely close parallel trails and confirm a bike point can traverse any positive-width corridor between them without collision.
+7. Observe AI near a human: straight runs should dominate, turns must not chatter, and occasional predicted-route cuts should be visible without direct ramming.
+8. Confirm wall height visually matches the bike.
+9. Confirm grid lines remain fixed relative to old walls while crossing several major cells.
+10. Confirm electrical paths are fixed, pulses move quickly through their 90-degree turns, and the start-screen background animates.
+11. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
+12. With independent browser contexts/devices, leave one public room open, start Play online from a second context after a delayed discovery interval, and confirm the second rider joins that existing room rather than creating another. Also confirm distinct invitation fragments stay isolated, copies of the same current URL connect peers, public/private invitation links auto-join, and private rooms never appear in public matchmaking. Add several AI to a room and verify that neither its advertised population nor its ranking against other rooms changes; ranking must follow only the number of connected humans including each host.
+13. Check desktop around 1440×900 and mobile around 390×844. On touch, verify left/right steering everywhere outside the centered brake rectangle, held braking only inside the centered 38% of the bottom 17%, zero visible control overlays, the higher stats position, lower minimap, Camera/Riders/Chat toolbar toggles, Settings, chat, and leaderboard touch isolation.
+14. Verify Play now starts immediately, Play online shows loading feedback then enters the grid, Settings opens only from its icon, and the toolbar is aligned top-right.
+15. Open chat with T and with the toolbar icon, send with Enter, cancel with Escape or the icon, confirm gameplay keys are blocked while typing, and verify the six-message/fade limit in solo and between peers.
+16. Join and leave with a second human peer: verify the Riders badge includes the local rider, excludes every AI, changes in real time, and both presence events appear as fading `GRID` messages. Crash one human into another human’s trail and then into an AI-owned trail; verify exactly the respective trail owner receives one point. Repeat with an AI victim, a self-trail crash, and an unrelated crash and verify none changes any score.
+17. Check browser console for errors, manifest/icon/service-worker endpoints, music and audio toggles, menu/tab visibility behavior, and that echo feedback remains restrained without runaway buildup.
+18. At base and maximum speed, rapidly turn as solo, host, and guest. Guest visuals must turn immediately, acknowledged prediction must disappear without a double trail or snap, and bounded host reconciliation must not create false crashes. Accumulate high rubber against one wall, travel clear and then alongside another trail, and confirm stress recovers rather than causing an unrelated death.
+19. With a long-running arena containing thousands of walls, confirm input response remains immediate and collision rays do not allocate a copied all-walls array for every probe.
+20. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
 
 ## Maintenance rule
 
