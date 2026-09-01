@@ -18,7 +18,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - The game is continuous. A crash never ends the session merely because only one or zero opponents remain.
 - Solo with the AI slider at zero remains fully playable forever.
 - Desktop controls: Left/Right or A/D to steer, Down/Space/S to brake, C to change camera, and T to open chat. Enter sends; Escape cancels chat or closes Settings.
-- Mobile controls: there are no visible left/right steering overlays. A free tap anywhere on the left half of the game canvas turns left and a free tap on the right half turns right; interactive UI such as toolbar, Settings, chat, leaderboard, and the remaining translucent Brake button must consume its own touches without steering.
+- Mobile controls have no visible overlays. A free press in the bottom 17% of the game canvas brakes for as long as the finger remains down. Above that band, a free tap on the left half turns left and a free tap on the right half turns right. Interactive UI such as toolbar, Settings, chat, and a visible leaderboard consumes its own touches without steering or braking.
 - Gameplay never exposes a pause action. Solo and online simulations continue while the page is active.
 - The PWA remains installable with manifest, favicon/app icon, service worker, standalone display, and mobile safe-area support.
 
@@ -45,7 +45,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Trail-wall height matches the visual bike height: approximately 1.48 world units, not a tall building-sized barrier.
 - Walls are slightly transparent, luminous, readable, and never mistaken for the floor circuitry.
 - On crash, the cycle explodes and cuts a traversable gap through nearby walls. The opening must be useful but not excessively wide.
-- Crash explosions carve only the local traversable opening; the remaining portions of every trail persist indefinitely and must not fade or disappear merely because their rider crashed and respawned.
+- By default, crash explosions carve only the local traversable opening and every remaining trail portion persists indefinitely after its rider respawns. A room host may enable “Clear trails on crash”; when enabled, every finalized trail owned by the crashed cycle disappears immediately after the crash gap is processed. Guests and solo players cannot authoritatively change this rule.
 - Other live riders continue moving throughout the death view.
 - The local camera slowly orbits the crash point. There is no visible countdown text.
 - Respawn occurs after roughly 4.35 seconds near the largest live-rider cluster.
@@ -74,15 +74,16 @@ The canonical implementation is intentionally dependency-light and centered on `
 
 ## HUD and leaderboard
 
-- The top-left HUD shows speed, brake energy, and rubber.
+- The top-left HUD shows speed, brake energy, and rubber. It begins near the safe top edge rather than reserving a blank full-width toolbar band; the toolbar occupies only its own top-right footprint.
 - The top-right leaderboard lists all active human and AI riders with a miniature bike, color, name, state, and survival score.
 - The local rider row is clearly highlighted and labeled “YOU”.
 - Names are generated automatically from short neon/computer-themed word pairs, saved locally, limited to 18 characters, and editable from Settings.
 - Human connection state and AI state must be distinguishable.
 - The leaderboard must remain compact at mobile widths and must not collide with touch controls.
 - A north-up minimap sits at bottom-right, centered on the local bike, and shows a relatively wide roughly 230-unit square of the world-fixed grid, nearby finalized/active walls, every live bike in its rider color, and a highlighted local marker. It updates at a restrained rate and uses cheap bounds culling so indefinite wall growth does not add unnecessary per-frame work.
-- On touch/mobile layouts the minimap moves above the steering controls instead of overlapping them.
+- On touch/mobile layouts the minimap uses the lower safe corner because there are no visible steering or brake overlays.
 - The leaderboard contains only rider information; name editing and invitation copying never appear there because Settings and the toolbar already own those actions.
+- A Riders toolbar toggle shows or hides the leaderboard. It is hidden by default on small screens, visible by default on larger screens, and the device-local choice persists.
 - Online play exposes a direct Invite icon in the top-right toolbar. It copies the current page URL; users never need to see or type a room ID.
 - A compact mini-chat sits below the left-side stats. T opens writing, Enter sends, and Escape cancels. It displays at most the latest six messages and each fades away over roughly nine seconds. Chat is available in solo and multiplayer; online messages are host-relayed, sender identity/color is normalized by the host, and text is whitespace-normalized and capped at 96 characters.
 
@@ -112,6 +113,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Removing AI removes its cycles and walls immediately, updates the leaderboard, and leaves `state.running` true.
 - Adding AI spawns it safely near the human cluster.
 - In network play the host owns the AI count and sends the resulting state to guests.
+- The room host also owns the Clear trails on crash rule. It defaults off, persists as the host’s device preference, is disabled in the menu, in solo play, and for guests, and is included in authoritative initialization updates.
 
 ## Audio
 
@@ -119,6 +121,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Speed and wall proximity raise engine/whine pitch smoothly.
 - Motor, high-frequency whine, turn cues, sparks, and crash noise feed a short 180 ms Web Audio delay with restrained feedback and return gain. Background music stays dry so the mix remains readable.
 - The browser owns the Web Audio context lifecycle for hidden or closed tabs; the game does not create a gameplay pause around visibility changes.
+- When saved audio is enabled, the first pointer or keyboard interaction resumes/creates the Web Audio context, satisfying mobile autoplay policy and restarting the score reliably after reload. The synthwave score may play in the menu after that interaction, but motor and whine gains remain at zero until a local bike is active. A saved mute remains authoritative until the user explicitly unmutes.
 - Do not add unload, forced suspension, or audio-context shutdown logic solely to compensate for another still-open browser tab.
 - Mute preference is device-local. Music has a separate device-local toggle and a dedicated dry mix bus without feeding the motor echo. Its original browser-synthesized score targets 1980s cyberpunk/synthwave: roughly 112 BPM, four-on-the-floor electronic kick, backbeat noise snare, pulsing minor-key bass, bright analog-style 16th-note arpeggio, and a slow four-chord pad progression. Keep it audible on phones but below the motor and collision cues.
 
@@ -130,15 +133,15 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Menus use crisp geometric panels, thin borders, compact uppercase labels, and no rounded dashboard-card aesthetic.
 - Preserve keyboard accessibility labels and visible focus styling.
 - Disable text selection and the mobile touch-callout across the game UI so swipes and rapid taps never highlight labels. Text remains selectable only inside editable name and chat inputs.
-- The top-right toolbar contains exactly four compact, recognizable line icons in this order: Invite, Find match, Audio, Settings. All have accessible names and concise hover/focus tooltips; Settings is rightmost. There is no redundant brand, pause, name edit, or invite action elsewhere in the HUD.
+- The top-right toolbar contains exactly six compact, recognizable line icons in this order: Invite, Find match, Audio, Camera, Riders, Settings. All have accessible names and concise hover/focus tooltips; Settings is rightmost. Camera cycles the same three saved views as the C key so mobile users never need a keyboard. There is no redundant brand, pause, name edit, invite action, or visible mobile steering/brake control elsewhere in the HUD.
 - All user-facing interface copy is English. Technical implementation details such as “single HTML file” never appear as marketing copy in the game UI.
-- Device-local preferences persist across sessions: rider name, AI count, maximum humans, camera mode, mute state, music state, and the last public/private flow. Authoritative settings received as a guest must not overwrite these personal saved defaults.
+- Device-local preferences persist across sessions: rider name, AI count, maximum humans, camera mode, mute state, music state, leaderboard visibility, and the last public/private flow. Authoritative settings received as a guest must not overwrite these personal saved defaults.
 
 ## Networking and safety invariants
 
 - Only the authoritative host calls the simulation step for a network room.
 - Guest input messages are routed to the elected host, not broadcast as authoritative state.
-- Host snapshots include names, colors, human/AI flags, position, direction, speed, meters, alive state, trail endpoints, death/respawn timing, invulnerability, scores, walls, AI count, and human limit. Initial state also carries the recent chat buffer.
+- Host snapshots include names, colors, human/AI flags, position, direction, speed, meters, alive state, trail endpoints, death/respawn timing, invulnerability, scores, walls, AI count, and human limit. Initial state also carries the recent chat buffer and Clear trails on crash rule.
 - A guest accepts authoritative state only from the elected host.
 - Names and room codes are sanitized and length-limited before entering state or the DOM.
 
@@ -157,7 +160,7 @@ Before publishing any gameplay change:
 9. Confirm electrical paths are fixed, pulses move quickly through their 90-degree turns, and the start-screen background animates.
 10. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
 11. With independent browser contexts/devices, confirm public matchmaking finds an advertised room, distinct invitation fragments stay isolated, copies of the same current URL connect peers, public/private invitation links auto-join, and private rooms never appear in public matchmaking.
-12. Check desktop around 1440×900 and mobile around 390×844, including half-screen tap steering, the single Brake overlay, Settings, chat, toolbar, and leaderboard touch isolation.
+12. Check desktop around 1440×900 and mobile around 390×844. On touch, verify left/right steering above the bottom band, held braking inside the bottom 17%, zero visible control overlays, the higher stats position, lower minimap, Camera/Riders toolbar toggles, Settings, chat, and leaderboard touch isolation.
 13. Verify Play now starts immediately, Play online shows loading feedback then enters the grid, Settings opens only from its icon, and the toolbar is aligned top-right.
 14. Press T, send with Enter, cancel with Escape, confirm gameplay keys are blocked while typing, and verify the six-message/fade limit in solo and between peers.
 15. Check browser console for errors, manifest/icon/service-worker endpoints, music and audio toggles, menu/tab visibility behavior, and that echo feedback remains restrained without runaway buildup.
