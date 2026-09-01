@@ -77,7 +77,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 
 - The top-left HUD shows speed, brake energy, and rubber. It begins near the safe top edge rather than reserving a blank full-width toolbar band; the toolbar occupies only its own top-right footprint.
 - At viewport widths of 400 px or less, toolbar buttons narrow to 34 px while retaining their 40 px height and the toolbar gap collapses to zero. This keeps the right edge of the left-side stats safely separated from the playing toolbar throughout the 361–400 px range. At 360 px or less, stats additionally move below the toolbar.
-- The top-right leaderboard lists all active human and AI riders with a miniature bike, color, name, state, and survival score.
+- The top-right leaderboard lists all active human and AI riders with a miniature bike, color, name, state, and trail-kill score.
 - The local rider row is clearly highlighted and labeled “YOU”.
 - Names are generated automatically from short neon/computer-themed word pairs, saved locally, limited to 18 characters, and editable from Settings.
 - Human connection state and AI state must be distinguishable.
@@ -86,8 +86,11 @@ The canonical implementation is intentionally dependency-light and centered on `
 - On touch/mobile layouts the minimap uses the lower safe corner because there are no visible steering or brake overlays.
 - The leaderboard contains only rider information; name editing and invitation copying never appear there because Settings and the toolbar already own those actions.
 - A Riders toolbar toggle shows or hides the leaderboard. It is hidden by default on small screens, visible by default on larger screens, and the device-local choice persists.
+- The Riders toolbar icon carries a compact live badge showing the number of connected human riders, including the local rider. The badge never counts AI cycles and stays available even when the leaderboard itself is hidden; it is hidden on the main menu before a playable rider exists.
 - Online play exposes a direct Invite icon in the top-right toolbar. It copies the current page URL; users never need to see or type a room ID.
 - A compact mini-chat sits below the left-side stats. T or the Chat toolbar icon opens writing; the toolbar icon toggles the composer on touch devices, Enter sends, and Escape cancels. The Chat icon is disabled until a playable local cycle is available and reflects its open state. It displays at most the latest six messages and each fades away over roughly nine seconds. Chat is available in solo and multiplayer; online messages are host-relayed, sender identity/color is normalized by the host, and text is whitespace-normalized and capped at 96 characters.
+- Human join and leave events appear in that same fading left-side feed as `GRID` system messages and are relayed by the authoritative host to everyone remaining in the room. AI additions and removals never create presence messages.
+- A racer’s score is the number of other human riders that have crashed into that racer’s trail. AI deaths, self-trail crashes, survival, and unrelated crashes add no points. A human crashing into an AI-owned trail may still add one point to that AI racer because the victim is human and the trail caused the elimination.
 
 ## Multiplayer and rooms
 
@@ -165,8 +168,9 @@ Before publishing any gameplay change:
 12. Check desktop around 1440×900 and mobile around 390×844. On touch, verify left/right steering everywhere outside the centered brake rectangle, held braking only inside the centered 38% of the bottom 17%, zero visible control overlays, the higher stats position, lower minimap, Camera/Riders/Chat toolbar toggles, Settings, chat, and leaderboard touch isolation.
 13. Verify Play now starts immediately, Play online shows loading feedback then enters the grid, Settings opens only from its icon, and the toolbar is aligned top-right.
 14. Open chat with T and with the toolbar icon, send with Enter, cancel with Escape or the icon, confirm gameplay keys are blocked while typing, and verify the six-message/fade limit in solo and between peers.
-15. Check browser console for errors, manifest/icon/service-worker endpoints, music and audio toggles, menu/tab visibility behavior, and that echo feedback remains restrained without runaway buildup.
-16. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
+15. Join and leave with a second human peer: verify the Riders badge includes the local rider, excludes every AI, changes in real time, and both presence events appear as fading `GRID` messages. Crash one human into another racer’s trail and verify exactly that trail owner receives one point; repeat with an AI victim and with a self-trail crash and verify neither changes any score.
+16. Check browser console for errors, manifest/icon/service-worker endpoints, music and audio toggles, menu/tab visibility behavior, and that echo feedback remains restrained without runaway buildup.
+17. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
 
 ## Maintenance rule
 
