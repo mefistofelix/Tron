@@ -31,6 +31,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Parallel-wall filtering compares each wall with the bike’s forward orientation, never with the perpendicular side-probe direction.
 - “Rubber” allows a brief, visibly tense approach to a wall before the crash. It must not permit tunneling or crossing.
 - Collision tests expand walls once by half the visual thickness plus the cycle radius (currently about 0.465 world units total), then compare the returned forward clearance directly with the swept movement. Never add the cycle radius a second time. AI and humans obey the same collision geometry.
+- A forward collision ray tests only walls perpendicular to the cast direction. Parallel walls are handled exclusively by the lateral grind probes; including their expanded bounding boxes in the forward ray causes false distance-zero crashes while riding alongside a trail.
 - AI is leashed to the active human/major rider cluster so it does not disappear across the infinite grid, but it must not crowd or deliberately ram the player.
 - AI must treat finalized and active trails as solid. It may use the same rubber mechanic but must never visually pass through a wall.
 
