@@ -129,6 +129,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Avoid visual effects above floor level that could be confused with walls or bikes.
 - Menus use crisp geometric panels, thin borders, compact uppercase labels, and no rounded dashboard-card aesthetic.
 - Preserve keyboard accessibility labels and visible focus styling.
+- Disable text selection and the mobile touch-callout across the game UI so swipes and rapid taps never highlight labels. Text remains selectable only inside editable name and chat inputs.
 - The top-right toolbar contains exactly four compact, recognizable line icons in this order: Invite, Find match, Audio, Settings. All have accessible names and concise hover/focus tooltips; Settings is rightmost. There is no redundant brand, pause, name edit, or invite action elsewhere in the HUD.
 - All user-facing interface copy is English. Technical implementation details such as “single HTML file” never appear as marketing copy in the game UI.
 - Device-local preferences persist across sessions: rider name, AI count, maximum humans, camera mode, mute state, music state, and the last public/private flow. Authoritative settings received as a guest must not overwrite these personal saved defaults.
