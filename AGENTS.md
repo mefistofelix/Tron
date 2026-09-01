@@ -14,7 +14,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Movement is cardinal: lightcycles turn exactly 90 degrees.
 - Every live cycle leaves a translucent luminous wall in its own color.
 - Bike and trail colors match; different riders use clearly distinct colors.
-- The camera defaults to a useful chase view that shows the player’s own bike and enough surrounding space. Additional close and top-down cameras may remain available.
+- The camera defaults to a useful chase view that shows the player’s own bike and enough surrounding space. All three playable views sit roughly 16–18% farther from the bike than the original framing: Smart chase scales from about 17.6 units back at base speed to 22.2 at maximum speed with a proportionally higher rise, Close chase uses about 11.1 units back and 6.5 high, and Top view uses about 33 units of height. Additional close and top-down cameras remain available.
 - The game is continuous. A crash never ends the session merely because only one or zero opponents remain.
 - Solo with the AI slider at zero remains fully playable forever.
 - Desktop controls: Left/Right or A/D to steer, Down/Space/S to brake, C to change camera, and T to open chat. Enter sends; Escape cancels chat or closes Settings.
