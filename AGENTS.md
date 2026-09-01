@@ -41,7 +41,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Trail-wall height matches the visual bike height: approximately 1.48 world units, not a tall building-sized barrier.
 - Walls are slightly transparent, luminous, readable, and never mistaken for the floor circuitry.
 - On crash, the cycle explodes and cuts a traversable gap through nearby walls. The opening must be useful but not excessively wide.
-- The crashed cycle’s old walls fade after several seconds.
+- Crash explosions carve only the local traversable opening; the remaining portions of every trail persist indefinitely and must not fade or disappear merely because their rider crashed and respawned.
 - Other live riders continue moving throughout the death view.
 - The local camera slowly orbits the crash point. There is no visible countdown text.
 - Respawn occurs after roughly 4.35 seconds near the largest live-rider cluster.
@@ -62,9 +62,10 @@ The canonical implementation is intentionally dependency-light and centered on `
 - The floor remains dark enough that walls, bikes, and hazards dominate.
 - Circuit-board traces are deterministic per fixed 80-unit world tile. Re-entering an area must reproduce the same geometry.
 - Traces use right-angle paths and chip-like rectangular pads at floor level.
-- Each circuit path carries two bright comet-like electric impulses with a luminous leading point and a roughly 6-unit tail. They move very quickly along the permanent path and visibly follow its 90-degree turns.
+- Each circuit path carries two bright linear electric impulses with a roughly 6-unit tail. They move very quickly along the permanent path and visibly follow its 90-degree turns. Do not render a separate leading point: isolated WebGL points can look like a stray cursor or targeting reticle near screen center.
 - Floor impulses must not resemble a rider, wall, or collision hazard.
 - The start screen shows the grid and moving electrical impulses behind the menu. Menu motion uses real elapsed time even before the simulation starts.
+- Cull walls by the focus point’s distance to the wall segment, never by distance to the segment midpoint. Long active/finalized walls must remain visible whenever any part of them intersects the render radius.
 
 ## HUD and leaderboard
 
