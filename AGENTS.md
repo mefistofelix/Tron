@@ -85,7 +85,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - The leaderboard contains only rider information; name editing and invitation copying never appear there because Settings and the toolbar already own those actions.
 - A Riders toolbar toggle shows or hides the leaderboard. It is hidden by default on small screens, visible by default on larger screens, and the device-local choice persists.
 - Online play exposes a direct Invite icon in the top-right toolbar. It copies the current page URL; users never need to see or type a room ID.
-- A compact mini-chat sits below the left-side stats. T opens writing, Enter sends, and Escape cancels. It displays at most the latest six messages and each fades away over roughly nine seconds. Chat is available in solo and multiplayer; online messages are host-relayed, sender identity/color is normalized by the host, and text is whitespace-normalized and capped at 96 characters.
+- A compact mini-chat sits below the left-side stats. T or the Chat toolbar icon opens writing; the toolbar icon toggles the composer on touch devices, Enter sends, and Escape cancels. The Chat icon is disabled until a playable local cycle is available and reflects its open state. It displays at most the latest six messages and each fades away over roughly nine seconds. Chat is available in solo and multiplayer; online messages are host-relayed, sender identity/color is normalized by the host, and text is whitespace-normalized and capped at 96 characters.
 
 ## Multiplayer and rooms
 
@@ -133,7 +133,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Menus use crisp geometric panels, thin borders, compact uppercase labels, and no rounded dashboard-card aesthetic.
 - Preserve keyboard accessibility labels and visible focus styling.
 - Disable text selection and the mobile touch-callout across the game UI so swipes and rapid taps never highlight labels. Text remains selectable only inside editable name and chat inputs.
-- The top-right toolbar contains exactly six compact, recognizable line icons in this order: Invite, Find match, Audio, Camera, Riders, Settings. All have accessible names and concise hover/focus tooltips; Settings is rightmost. Camera cycles the same three saved views as the C key so mobile users never need a keyboard. There is no redundant brand, pause, name edit, invite action, or visible mobile steering/brake control elsewhere in the HUD.
+- The top-right toolbar contains exactly seven compact, recognizable line icons in this order: Invite, Find match, Audio, Camera, Riders, Chat, Settings. All have accessible names and concise hover/focus tooltips; Settings is rightmost. Camera cycles the same three saved views as the C key, and Chat opens the composer, so mobile users never need a keyboard for either action. While actively riding on a small screen, Find match is hidden to preserve the same compact toolbar width; it remains available from the menu. There is no redundant brand, pause, name edit, invite action, or visible mobile steering/brake control elsewhere in the HUD.
 - All user-facing interface copy is English. Technical implementation details such as “single HTML file” never appear as marketing copy in the game UI.
 - Device-local preferences persist across sessions: rider name, AI count, maximum humans, camera mode, mute state, music state, leaderboard visibility, and the last public/private flow. Authoritative settings received as a guest must not overwrite these personal saved defaults.
 
@@ -160,9 +160,9 @@ Before publishing any gameplay change:
 9. Confirm electrical paths are fixed, pulses move quickly through their 90-degree turns, and the start-screen background animates.
 10. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
 11. With independent browser contexts/devices, confirm public matchmaking finds an advertised room, distinct invitation fragments stay isolated, copies of the same current URL connect peers, public/private invitation links auto-join, and private rooms never appear in public matchmaking.
-12. Check desktop around 1440×900 and mobile around 390×844. On touch, verify left/right steering above the bottom band, held braking inside the bottom 17%, zero visible control overlays, the higher stats position, lower minimap, Camera/Riders toolbar toggles, Settings, chat, and leaderboard touch isolation.
+12. Check desktop around 1440×900 and mobile around 390×844. On touch, verify left/right steering above the bottom band, held braking inside the bottom 17%, zero visible control overlays, the higher stats position, lower minimap, Camera/Riders/Chat toolbar toggles, Settings, chat, and leaderboard touch isolation.
 13. Verify Play now starts immediately, Play online shows loading feedback then enters the grid, Settings opens only from its icon, and the toolbar is aligned top-right.
-14. Press T, send with Enter, cancel with Escape, confirm gameplay keys are blocked while typing, and verify the six-message/fade limit in solo and between peers.
+14. Open chat with T and with the toolbar icon, send with Enter, cancel with Escape or the icon, confirm gameplay keys are blocked while typing, and verify the six-message/fade limit in solo and between peers.
 15. Check browser console for errors, manifest/icon/service-worker endpoints, music and audio toggles, menu/tab visibility behavior, and that echo feedback remains restrained without runaway buildup.
 16. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
 
