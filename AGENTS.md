@@ -18,7 +18,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - The game is continuous. A crash never ends the session merely because only one or zero opponents remain.
 - Solo with the AI slider at zero remains fully playable forever.
 - Desktop controls: Left/Right or A/D to steer, Down/Space/S to brake, C to change camera, and T to open chat. Enter sends; Escape cancels chat or closes Settings.
-- Mobile controls have no visible overlays. A free press in the bottom 17% of the game canvas brakes for as long as the finger remains down. Above that band, a free tap on the left half turns left and a free tap on the right half turns right. Interactive UI such as toolbar, Settings, chat, and a visible leaderboard consumes its own touches without steering or braking.
+- Mobile controls have no visible overlays. Holding within the centered 38% of the bottom 17% of the game canvas brakes for as long as the finger remains down. Every point outside that centered brake rectangle—including the lower left and lower right sides—steers according to the tapped screen half. Interactive UI such as toolbar, Settings, chat, and a visible leaderboard consumes its own touches without steering or braking.
 - Gameplay never exposes a pause action. Solo and online simulations continue while the page is active.
 - The PWA remains installable with manifest, favicon/app icon, service worker, standalone display, and mobile safe-area support.
 
@@ -160,7 +160,7 @@ Before publishing any gameplay change:
 9. Confirm electrical paths are fixed, pulses move quickly through their 90-degree turns, and the start-screen background animates.
 10. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
 11. With independent browser contexts/devices, confirm public matchmaking finds an advertised room, distinct invitation fragments stay isolated, copies of the same current URL connect peers, public/private invitation links auto-join, and private rooms never appear in public matchmaking.
-12. Check desktop around 1440×900 and mobile around 390×844. On touch, verify left/right steering above the bottom band, held braking inside the bottom 17%, zero visible control overlays, the higher stats position, lower minimap, Camera/Riders/Chat toolbar toggles, Settings, chat, and leaderboard touch isolation.
+12. Check desktop around 1440×900 and mobile around 390×844. On touch, verify left/right steering everywhere outside the centered brake rectangle, held braking only inside the centered 38% of the bottom 17%, zero visible control overlays, the higher stats position, lower minimap, Camera/Riders/Chat toolbar toggles, Settings, chat, and leaderboard touch isolation.
 13. Verify Play now starts immediately, Play online shows loading feedback then enters the grid, Settings opens only from its icon, and the toolbar is aligned top-right.
 14. Open chat with T and with the toolbar icon, send with Enter, cancel with Escape or the icon, confirm gameplay keys are blocked while typing, and verify the six-message/fade limit in solo and between peers.
 15. Check browser console for errors, manifest/icon/service-worker endpoints, music and audio toggles, menu/tab visibility behavior, and that echo feedback remains restrained without runaway buildup.
