@@ -14,7 +14,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Movement is cardinal: lightcycles turn exactly 90 degrees.
 - Every live cycle leaves a translucent luminous wall in its own color.
 - Bike and trail colors match; different riders use clearly distinct colors.
-- The camera defaults to a useful chase view that shows the player’s own bike and enough surrounding space. All three playable views sit roughly 16–18% farther from the bike than the original framing: Smart chase scales from about 17.6 units back at base speed to 22.2 at maximum speed with a proportionally higher rise, Close chase uses about 11.1 units back and 6.5 high, and Top view uses about 33 units of height. Additional close and top-down cameras remain available.
+- The camera defaults to a useful chase view that shows the player’s own bike and enough surrounding space. All three playable views sit roughly 16–18% farther from the bike than the original framing: Smart chase scales from about 18.1 units back at base speed to 22.2 at maximum speed with a proportionally higher rise, Close chase uses about 11.1 units back and 6.5 high, and Top view uses about 33 units of height. Additional close and top-down cameras remain available.
 - The game is continuous. A crash never ends the session merely because only one or zero opponents remain.
 - Solo with the AI slider at zero remains fully playable forever.
 - Desktop controls: Left/Right or A/D to steer, Down/Space/S to brake, C to change camera, and T to open chat. Enter sends; Escape cancels chat or closes Settings.
@@ -24,7 +24,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 
 ## Movement and Armagetron-style dynamics
 
-- Base speed is approximately 16 world units/second, with a high grind-driven maximum near 82 (about 295 km/h on the HUD).
+- Base speed is 22.2 world units/second, displayed as approximately 80 km/h on the HUD. The high grind-driven maximum remains near 82 world units/second (about 295 km/h), preserving a large acceleration range.
 - Turning reduces speed slightly. Local turns are applied immediately when a key or touch control is pressed; a roughly 45 ms anti-spam cooldown buffers the latest turn instead of discarding it.
 - Braking consumes a rechargeable brake-energy meter, decelerates at roughly 23 world units/second², and cannot reduce speed below a safe minimum.
 - Riding parallel within about 7.5 world units of a finalized wall produces “grind” against both own and other riders’ trails. The effect remains continuous across the whole range but uses a progressive curve (`0.28t + 0.72t^2.2`) so reducing an already small gap—for example from 2 units to 1—creates a clearly larger acceleration difference. It drives visible rear flames and pitch and adds roughly `28 × proximity` world units/second² up to the speed cap.

@@ -121,7 +121,7 @@
 
     const COLORS=['#31ecff','#ff3da8','#ffd84a','#76ff74','#9d7bff','#ff784f','#38ffbd','#ff69e1','#b9ff4d','#48a7ff','#ffb347','#d7f2ff'];
     const DIRS=[{x:0,z:-1},{x:1,z:0},{x:0,z:1},{x:-1,z:0}];
-    const cfg={baseSpeed:16,maxSpeed:82,minSpeed:7.5,turnFactor:.94,turnDelay:.045,wallNear:7.5,wallHeight:1.48,blastRadius:4.4};
+    const cfg={baseSpeed:22.2,maxSpeed:82,minSpeed:7.5,turnFactor:.94,turnDelay:.045,wallNear:7.5,wallHeight:1.48,blastRadius:4.4};
     function storedInt(key,fallback,min,max){const n=Number.parseInt(localStorage.getItem(key),10);return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback}
     const state={mode:'menu',running:false,time:0,round:0,roundEnding:false,cycles:[],walls:[],particles:[],scores:[],chat:[],nextWall:1,nextCycle:100,accum:0,last:performance.now(),sendClock:0,camMode:storedInt('grid-camera',0,0,2),localId:0,shake:0,aiCount:storedInt('grid-ai-count',3,0,6),maxHumans:storedInt('grid-max-humans',4,2,6),clearTrailsOnCrash:false,roomId:'',deathCam:null,leaderSig:'',leaderRenderAt:0};
     let isHost=false,toastTimer=0,installPrompt=null,autoRoom=null,autoAction=null,autoSelf='',autoHostPeer='',autoConnectTimer=0,autoRoomId='',autoIsPublic=false,publicJoinMode='',publicInviteLink='',privateInviteLink='',directoryRoom=null,directoryAction=null,directoryTimer=0,publicMatchTimer=0,publicMatchPending=false,minimapAt=0;
