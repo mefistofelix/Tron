@@ -71,6 +71,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Floor impulses must not resemble a rider, wall, or collision hazard.
 - The start screen shows the grid and moving electrical impulses behind the menu. Menu motion uses real elapsed time even before the simulation starts.
 - Cull walls by the focus point’s distance to the wall segment, never by distance to the segment midpoint. Long active/finalized walls must remain visible whenever any part of them intersects the render radius.
+- AI motorcycles alone carry a compact, bike-mounted dark rear plate with a bright geometric “AI” glyph. Human bikes have no equivalent marker. Never add floating rider names above any motorcycle; identification names stay in the leaderboard because world-space labels create distracting visual clutter.
 
 ## HUD and leaderboard
 
@@ -96,7 +97,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Every gameplay room has its own sanitized internal ID. Public IDs are generated as `PUB-XXXXXX`; private IDs are generated as high-entropy `PRI-XXXXXXXXXX` values. The active ID lives in the current page URL fragment and is not presented as a user-facing field.
 - Public and private rooms use the same host-authoritative gameplay transport. Their only product-level difference is discoverability: public rooms are advertised to random riders, while private rooms are unlisted and require their ID or invitation link.
 - Public matchmaking uses a separate, fixed Trystero/Nostr directory rendezvous room. Public hosts send only short-lived advertisements containing room ID, connected-player count, capacity, and free slots. The directory stores no gameplay state and has no persistent database.
-- “Find match” joins an advertised public room with a free slot, or creates a fresh uniquely identified public room when none answers. A stale full-room result automatically resumes matchmaking.
+- “Find match” collects public-room advertisements for about 1.1 seconds, ranks open rooms by connected human count, then by the fewest remaining slots, and joins the busiest candidate so population consolidates instead of fragmenting. It creates a fresh uniquely identified public room only when none answers. A stale full-room result automatically resumes matchmaking.
 - Creating, finding, or joining any room immediately updates the current URL with its fragment. Copying the current URL is the complete reusable invitation; opening it auto-joins without manual input.
 - The main menu keeps two direct calls to action: “Play now” starts solo immediately and “Play online” starts the last saved public/private flow immediately. Play online shows an inline spinner and is disabled only while discovery and connection are pending.
 - Settings is a non-modal dropdown aligned below the rightmost toolbar icon. It contains rider name, public/private toggle, AI count, maximum humans, music toggle, online start action, install action, and connection status. It has no redundant close button: clicking outside or pressing Escape closes it.
