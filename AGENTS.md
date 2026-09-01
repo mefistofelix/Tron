@@ -76,6 +76,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 ## HUD and leaderboard
 
 - The top-left HUD shows speed, brake energy, and rubber. It begins near the safe top edge rather than reserving a blank full-width toolbar band; the toolbar occupies only its own top-right footprint.
+- At viewport widths of 400 px or less, toolbar buttons narrow to 34 px while retaining their 40 px height and the toolbar gap collapses to zero. This keeps the right edge of the left-side stats safely separated from the playing toolbar throughout the 361–400 px range. At 360 px or less, stats additionally move below the toolbar.
 - The top-right leaderboard lists all active human and AI riders with a miniature bike, color, name, state, and survival score.
 - The local rider row is clearly highlighted and labeled “YOU”.
 - Names are generated automatically from short neon/computer-themed word pairs, saved locally, limited to 18 characters, and editable from Settings.
