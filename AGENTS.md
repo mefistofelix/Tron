@@ -82,7 +82,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - The leaderboard must remain compact at mobile widths and must not collide with touch controls.
 - A north-up minimap sits at bottom-right, centered on the local bike, and shows a relatively wide roughly 230-unit square of the world-fixed grid, nearby finalized/active walls, every live bike in its rider color, and a highlighted local marker. It updates at a restrained rate and uses cheap bounds culling so indefinite wall growth does not add unnecessary per-frame work.
 - On touch/mobile layouts the minimap moves above the steering controls instead of overlapping them.
-- Online play exposes the current room ID persistently beneath the leaderboard header; activating it copies the ID. The complete invitation link remains in the `∞` multiplayer panel.
+- Online play exposes a persistent “Copia invito” action beneath the leaderboard header and a direct “Invita” action in the top bar. Both copy the current page URL; users never need to see or type a room ID.
 
 ## Multiplayer and rooms
 
@@ -90,13 +90,13 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Do not require manual offer/answer copy-and-paste or a ping-pong exchange of links.
 - Automatic peer discovery uses Trystero `0.25.3` over its default decentralized Nostr strategy, imported from `https://esm.run/trystero@0.25.3`.
 - Gameplay data travels through encrypted WebRTC peer connections. Public relays are used only for discovery/signaling.
-- Every gameplay room has its own sanitized, shareable ID. Public IDs are generated as `PUB-XXXXXX`; private IDs are generated as high-entropy `PRI-XXXXXXXXXX` values.
+- Every gameplay room has its own sanitized internal ID. Public IDs are generated as `PUB-XXXXXX`; private IDs are generated as high-entropy `PRI-XXXXXXXXXX` values. The active ID lives in the current page URL fragment and is not presented as a user-facing field.
 - Public and private rooms use the same host-authoritative gameplay transport. Their only product-level difference is discoverability: public rooms are advertised to random riders, while private rooms are unlisted and require their ID or invitation link.
 - Public matchmaking uses a separate, fixed Trystero/Nostr directory rendezvous room. Public hosts send only short-lived advertisements containing room ID, connected-player count, capacity, and free slots. The directory stores no gameplay state and has no persistent database.
 - “Trova partita” joins an advertised public room with a free slot, or creates a fresh uniquely identified public room when none answers. A stale full-room result automatically resumes matchmaking.
-- “Nuova pubblica” always generates a new public room. “Entra con ID” joins the requested public room directly. A public room’s creator or participant can share either its displayed ID or its reusable public invitation URL.
+- “Nuova pubblica” always generates a new public room. Creating, finding, or joining any room immediately updates the current URL with its fragment. Copying the current URL is the complete reusable invitation; opening it auto-joins without manual input.
 - The main-menu “Partita pubblica” button immediately starts public matchmaking in one action. The top `∞` control opens the full public/private room chooser.
-- Private rooms have one editable room ID and one reusable invitation URL; there is no second key or password field. Opening either a public or private invitation URL auto-fills and joins the intended room without a return-link exchange.
+- Private rooms are created with one hidden high-entropy ID and one reusable fragment invitation URL; there is no editable ID, second key, or password field. Opening either a public or private invitation URL joins the intended room without a return-link exchange.
 - Maximum human count is controlled by the host’s slider, currently 2–6. Excess riders receive a clear “room full” state.
 - If no host is found after a short discovery window, the local peer becomes host. Simultaneous hosts resolve deterministically by peer ID. If a host leaves, remaining peers attempt a deterministic re-election; resetting the authoritative round during migration is acceptable, but the room must remain usable.
 - WebRTC can still fail on restrictive networks without TURN. Communicate that limitation honestly; do not claim that “no owned server” means “no external signaling infrastructure”.
@@ -125,7 +125,8 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Avoid visual effects above floor level that could be confused with walls or bikes.
 - Menus use crisp geometric panels, thin borders, compact uppercase labels, and no rounded dashboard-card aesthetic.
 - Preserve keyboard accessibility labels and visible focus styling.
-- The top-right options bar uses recognizable line icons, explicit desktop labels, accessible names, and concise hover/focus tooltips for multiplayer, options, shared pause, and audio. It collapses to compact icon-only controls on narrow screens.
+- The top-right bar uses recognizable line icons, explicit desktop labels, accessible names, and concise hover/focus tooltips for multiplayer, direct invitation copying, shared pause, audio, and settings. “Settings” is always the rightmost control; the bar collapses to compact icon-only controls on narrow screens.
+- Device-local preferences persist across sessions: rider name, AI count, maximum humans, camera mode, mute state, and the last public/private panel. Authoritative settings received as a guest must not overwrite these personal saved defaults.
 
 ## Networking and safety invariants
 
@@ -149,7 +150,7 @@ Before publishing any gameplay change:
 8. Confirm grid lines remain fixed relative to old walls while crossing several major cells.
 9. Confirm electrical paths are fixed, pulses move quickly through their 90-degree turns, and the start-screen background animates.
 10. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
-11. With independent browser contexts/devices, confirm public matchmaking finds an advertised room, two different public IDs stay isolated, the same public ID connects peers, public ID/link invitations auto-join, and private ID/link invitations work without appearing in public matchmaking.
+11. With independent browser contexts/devices, confirm public matchmaking finds an advertised room, distinct invitation fragments stay isolated, copies of the same current URL connect peers, public/private invitation links auto-join, and private rooms never appear in public matchmaking.
 12. Check desktop around 1440×900 and mobile around 390×844, including touch controls and leaderboard.
 13. Check browser console for errors, manifest/icon/service-worker endpoints, audio behavior across play/pause/menu/tab visibility, and that the echo feedback remains restrained without runaway buildup.
 14. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
