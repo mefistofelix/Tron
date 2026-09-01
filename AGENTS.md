@@ -18,7 +18,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - The game is continuous. A crash never ends the session merely because only one or zero opponents remain.
 - Solo with the AI slider at zero remains fully playable forever.
 - Desktop controls: Left/Right or A/D to steer, Down/Space/S to brake, C to change camera, and T to open chat. Enter sends; Escape cancels chat or closes Settings.
-- Mobile controls: translucent circular left, right, and brake buttons positioned as overlays without covering critical play space.
+- Mobile controls: there are no visible left/right steering overlays. A free tap anywhere on the left half of the game canvas turns left and a free tap on the right half turns right; interactive UI such as toolbar, Settings, chat, leaderboard, and the remaining translucent Brake button must consume its own touches without steering.
 - Gameplay never exposes a pause action. Solo and online simulations continue while the page is active.
 - The PWA remains installable with manifest, favicon/app icon, service worker, standalone display, and mobile safe-area support.
 
@@ -120,7 +120,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Motor, high-frequency whine, turn cues, sparks, and crash noise feed a short 180 ms Web Audio delay with restrained feedback and return gain. Background music stays dry so the mix remains readable.
 - The browser owns the Web Audio context lifecycle for hidden or closed tabs; the game does not create a gameplay pause around visibility changes.
 - Do not add unload, forced suspension, or audio-context shutdown logic solely to compensate for another still-open browser tab.
-- Mute preference is device-local. Music has a separate device-local toggle and a dedicated dry mix bus; it uses a more audible phone-friendly bass/arp sequence without feeding the motor echo.
+- Mute preference is device-local. Music has a separate device-local toggle and a dedicated dry mix bus without feeding the motor echo. Its original browser-synthesized score targets 1980s cyberpunk/synthwave: roughly 112 BPM, four-on-the-floor electronic kick, backbeat noise snare, pulsing minor-key bass, bright analog-style 16th-note arpeggio, and a slow four-chord pad progression. Keep it audible on phones but below the motor and collision cues.
 
 ## Visual and interaction rules
 
@@ -156,7 +156,7 @@ Before publishing any gameplay change:
 9. Confirm electrical paths are fixed, pulses move quickly through their 90-degree turns, and the start-screen background animates.
 10. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
 11. With independent browser contexts/devices, confirm public matchmaking finds an advertised room, distinct invitation fragments stay isolated, copies of the same current URL connect peers, public/private invitation links auto-join, and private rooms never appear in public matchmaking.
-12. Check desktop around 1440×900 and mobile around 390×844, including touch controls and leaderboard.
+12. Check desktop around 1440×900 and mobile around 390×844, including half-screen tap steering, the single Brake overlay, Settings, chat, toolbar, and leaderboard touch isolation.
 13. Verify Play now starts immediately, Play online shows loading feedback then enters the grid, Settings opens only from its icon, and the toolbar is aligned top-right.
 14. Press T, send with Enter, cancel with Escape, confirm gameplay keys are blocked while typing, and verify the six-message/fade limit in solo and between peers.
 15. Check browser console for errors, manifest/icon/service-worker endpoints, music and audio toggles, menu/tab visibility behavior, and that echo feedback remains restrained without runaway buildup.
