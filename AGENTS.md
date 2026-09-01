@@ -24,7 +24,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 
 ## Movement and Armagetron-style dynamics
 
-- Base speed is approximately 16 world units/second, with a controlled maximum near 43.
+- Base speed is approximately 16 world units/second, with a high grind-driven maximum near 65 (about 234 km/h on the HUD).
 - Turning reduces speed slightly. Local turns are applied immediately when a key or touch control is pressed; a roughly 45 ms anti-spam cooldown buffers the latest turn instead of discarding it.
 - Braking consumes a rechargeable brake-energy meter and cannot reduce speed below a safe minimum.
 - Riding parallel within about 7.5 world units of a finalized wall produces “grind” against both own and other riders’ trails. The effect grows continuously and nearly linearly with proximity, drives visible rear indicators and pitch, and adds roughly `24 × proximity` world units/second² up to the speed cap; it must be clearly perceptible even before the rider is almost touching the wall.
@@ -84,6 +84,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Automatic peer discovery uses Trystero `0.25.3` over its default decentralized Nostr strategy, imported from `https://esm.run/trystero@0.25.3`.
 - Gameplay data travels through encrypted WebRTC peer connections. Public relays are used only for discovery/signaling.
 - Public matchmaking joins the fixed `PUBLIC-01` room. The first rider becomes host; later riders discover it automatically.
+- The main-menu “Partita pubblica” button immediately opens the public connection state and starts discovery in one action. The top `∞` control opens the full public/private room chooser.
 - Private rooms use an editable room code and shared key. “Create private” generates missing values and one reusable invitation URL. The key stays in the URL fragment so it is not sent in the HTTP request.
 - Opening a private invitation URL auto-fills and joins the room without a return link.
 - Maximum human count is controlled by the host’s slider, currently 2–6. Excess riders receive a clear “room full” state.
