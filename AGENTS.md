@@ -113,7 +113,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Removing AI removes its cycles and walls immediately, updates the leaderboard, and leaves `state.running` true.
 - Adding AI spawns it safely near the human cluster.
 - In network play the host owns the AI count and sends the resulting state to guests.
-- The room host also owns the Clear trails on crash rule. It defaults off, persists as the host’s device preference, is disabled in the menu, in solo play, and for guests, and is included in authoritative initialization updates.
+- The room host owns every online room option: AI count, maximum humans, and Clear trails on crash. These controls stay disabled in the menu while host election is pending and for every guest. Once elected, only the host can change them and broadcast the result. Solo play has no room authority and exposes only its local AI-count control; maximum humans and Clear trails remain disabled there. Clear trails defaults off, persists as the host’s device preference, and is included in authoritative initialization updates.
 
 ## Audio
 
