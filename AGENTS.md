@@ -2,6 +2,15 @@
 
 This file is the source of truth for rebuilding or continuing GRID//∞ with another LLM. Keep it aligned with every accepted gameplay, networking, visual, audio, interface, and deployment change. If code and this document disagree, fix both in the same change.
 
+## Continuation contract for another LLM
+
+- Read this entire file before changing the game. Treat later user decisions as replacements for older behavior, not optional variants.
+- `index.html` is the canonical product source. It owns the English interface, CSS, WebGL renderer, simulation, Web Audio, PWA registration, mobile controls, chat, matchmaking, and WebRTC room logic.
+- `dist/server/index.js` is generated output. Never maintain it independently: change `index.html` or `build-worker.mjs`, then regenerate it with `build-worker.mjs`.
+- Keep this specification and the implementation in the same commit. Every accepted behavioral or design choice must be recorded here, and superseded wording must be removed so a clean rebuild has one unambiguous target.
+- For every published UI or behavior revision, advance the `grid-infinity-vNN` service-worker cache name, validate the generated worker, and deploy the exact committed source through the existing Sites project in `.openai/hosting.json`.
+- The stable public origin is `https://tronrace.haxthepax.chatgpt.site`. Query-string version markers are only cache-busting handoff links; room identity belongs exclusively in the URL fragment.
+
 ## Product intent
 
 GRID//∞ is a lightweight, open-source, browser-based 3D lightcycle game inspired by the mechanics documented in the Armagetron “The Basics” page and by the black-space, luminous-grid, geometric computer-world language of 1982-era TRON. It must feel immediate, minimal, attractive, readable at speed, mobile-friendly, and playable indefinitely on an unbounded plane.
@@ -87,10 +96,12 @@ The canonical implementation is intentionally dependency-light and centered on `
 - The leaderboard contains only rider information; name editing and invitation copying never appear there because Settings and the toolbar already own those actions.
 - A Riders toolbar toggle shows or hides the leaderboard. It is hidden by default on small screens, visible by default on larger screens, and the device-local choice persists.
 - The Riders toolbar icon carries a compact live badge showing the number of connected human riders, including the local rider. The badge never counts AI cycles and stays available even when the leaderboard itself is hidden; it is hidden on the main menu before a playable rider exists.
+- In solo the badge therefore reads `1`. In an online room it counts the human host plus every connected human guest. Death/respawn never changes it; a network join or departure does. This same human-only definition must be reused by the room-capacity display and public matchmaking.
 - Online play exposes a direct Invite icon in the top-right toolbar. It copies the current page URL; users never need to see or type a room ID.
 - A compact mini-chat sits below the left-side stats. T or the Chat toolbar icon opens writing; the toolbar icon toggles the composer on touch devices, Enter sends, and Escape cancels. The Chat icon is disabled until a playable local cycle is available and reflects its open state. It displays at most the latest six messages and each fades away over roughly nine seconds. Chat is available in solo and multiplayer; online messages are host-relayed, sender identity/color is normalized by the host, and text is whitespace-normalized and capped at 96 characters.
 - Human join and leave events appear in that same fading left-side feed as `GRID` system messages and are relayed by the authoritative host to everyone remaining in the room. AI additions and removals never create presence messages.
 - A racer’s score is the number of other human riders that have crashed into that racer’s trail. AI deaths, self-trail crashes, survival, and unrelated crashes add no points. A human crashing into an AI-owned trail may still add one point to that AI racer because the victim is human and the trail caused the elimination.
+- Trail-kill attribution is host-authoritative and uses the owner ID of the exact line segment hit by the swept collision point. Award exactly one point at crash time, preserve scores across respawns for the life of the current game session, and never accept a score claim from a guest.
 
 ## Multiplayer and rooms
 
@@ -101,12 +112,14 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Every gameplay room has its own sanitized internal ID. Public IDs are generated as `PUB-XXXXXX`; private IDs are generated as high-entropy `PRI-XXXXXXXXXX` values. The active ID lives in the current page URL fragment and is not presented as a user-facing field.
 - Public and private rooms use the same host-authoritative gameplay transport. Their only product-level difference is discoverability: public rooms are advertised to random riders, while private rooms are unlisted and require their ID or invitation link.
 - Public matchmaking uses a separate, fixed Trystero/Nostr directory rendezvous room. Public hosts send only short-lived advertisements containing room ID, connected-human count, human capacity, and free human slots. The directory stores no gameplay state and has no persistent database. AI cycles are never included in the advertised population, never consume human slots, and never influence room ranking.
+- The advertised connected-human count is explicitly `1 + connected human guests`: the host counts as one, every human guest counts once, and AI cycles are ignored regardless of how many the host adds after room creation. Legacy directory advertisements may expose the older `players` field, but that value is also human-only.
 - “Find match” collects public-room advertisements for about 1.1 seconds, ranks open rooms strictly by connected human count, then by the fewest remaining human slots, and joins the busiest candidate so population consolidates instead of fragmenting. AI count is ignored even when the host has added bots. It creates a fresh uniquely identified public room only when none answers. A stale full-room result automatically resumes matchmaking.
 - Creating, finding, or joining any room immediately updates the current URL with its fragment. Copying the current URL is the complete reusable invitation; opening it auto-joins without manual input.
 - The main menu keeps two direct calls to action: “Play now” starts solo immediately and “Play online” starts the last saved public/private flow immediately. Play online shows an inline spinner and is disabled only while discovery and connection are pending.
 - Settings is a non-modal dropdown aligned below the rightmost toolbar icon. It contains rider name, public/private toggle, AI count, maximum humans, music toggle, online start action, install action, and connection status. It has no redundant close button: clicking outside or pressing Escape closes it.
 - Private rooms are created with one hidden high-entropy ID and one reusable fragment invitation URL; there is no editable ID, second key, or password field. Opening either a public or private invitation URL joins the intended room without a return-link exchange.
 - Maximum human count is controlled by the host’s slider, currently 2–6. Excess riders receive a clear “room full” state.
+- When a human guest disconnects, the host immediately removes that rider’s cycle and every trail owned by it, rebroadcasts authoritative state, refreshes the human badge/capacity advertisement, and emits one fading `GRID` departure message. Joining performs the inverse presence/count update. AI slider changes never emit human presence messages.
 - If no host is found after a short discovery window, the local peer becomes host. Simultaneous hosts resolve deterministically by peer ID. If a host leaves, remaining peers attempt a deterministic re-election; resetting the authoritative round during migration is acceptable, but the room must remain usable.
 - WebRTC can still fail on restrictive networks without TURN. Communicate that limitation honestly; do not claim that “no owned server” means “no external signaling infrastructure”.
 - Retain no player accounts, personal data, or central persistent lobby state.
@@ -146,7 +159,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 
 - Only the authoritative host calls the simulation step for a network room.
 - Guest input messages are routed to the elected host, not broadcast as authoritative state.
-- Host snapshots include names, colors, human/AI flags, position, direction, speed, meters, alive state, trail endpoints, death/respawn timing, invulnerability, scores, walls, AI count, and human limit. Initial state also carries the recent chat buffer and Clear trails on crash rule.
+- Host initialization carries rider identity/type, complete cycle state, walls, scores, AI count, human limit, recent chat, and Clear trails on crash. Frequent snapshots carry authoritative time, cycle motion/state, scores, and running flags; finalized wall additions and full wall replacements use their dedicated messages. All wall representations preserve their owner ID for collision attribution and trail-kill scoring.
 - A guest accepts authoritative state only from the elected host.
 - Names and room codes are sanitized and length-limited before entering state or the DOM.
 
@@ -164,11 +177,11 @@ Before publishing any gameplay change:
 8. Confirm grid lines remain fixed relative to old walls while crossing several major cells.
 9. Confirm electrical paths are fixed, pulses move quickly through their 90-degree turns, and the start-screen background animates.
 10. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
-11. With independent browser contexts/devices, confirm public matchmaking finds an advertised room, distinct invitation fragments stay isolated, copies of the same current URL connect peers, public/private invitation links auto-join, and private rooms never appear in public matchmaking.
+11. With independent browser contexts/devices, confirm public matchmaking finds an advertised room, distinct invitation fragments stay isolated, copies of the same current URL connect peers, public/private invitation links auto-join, and private rooms never appear in public matchmaking. Add several AI to a room and verify that neither its advertised population nor its ranking against other rooms changes; ranking must follow only the number of connected humans including each host.
 12. Check desktop around 1440×900 and mobile around 390×844. On touch, verify left/right steering everywhere outside the centered brake rectangle, held braking only inside the centered 38% of the bottom 17%, zero visible control overlays, the higher stats position, lower minimap, Camera/Riders/Chat toolbar toggles, Settings, chat, and leaderboard touch isolation.
 13. Verify Play now starts immediately, Play online shows loading feedback then enters the grid, Settings opens only from its icon, and the toolbar is aligned top-right.
 14. Open chat with T and with the toolbar icon, send with Enter, cancel with Escape or the icon, confirm gameplay keys are blocked while typing, and verify the six-message/fade limit in solo and between peers.
-15. Join and leave with a second human peer: verify the Riders badge includes the local rider, excludes every AI, changes in real time, and both presence events appear as fading `GRID` messages. Crash one human into another racer’s trail and verify exactly that trail owner receives one point; repeat with an AI victim and with a self-trail crash and verify neither changes any score.
+15. Join and leave with a second human peer: verify the Riders badge includes the local rider, excludes every AI, changes in real time, and both presence events appear as fading `GRID` messages. Crash one human into another human’s trail and then into an AI-owned trail; verify exactly the respective trail owner receives one point. Repeat with an AI victim, a self-trail crash, and an unrelated crash and verify none changes any score.
 16. Check browser console for errors, manifest/icon/service-worker endpoints, music and audio toggles, menu/tab visibility behavior, and that echo feedback remains restrained without runaway buildup.
 17. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
 
