@@ -17,19 +17,20 @@ The canonical implementation is intentionally dependency-light and centered on `
 - The camera defaults to a useful chase view that shows the player’s own bike and enough surrounding space. Additional close and top-down cameras may remain available.
 - The game is continuous. A crash never ends the session merely because only one or zero opponents remain.
 - Solo with the AI slider at zero remains fully playable forever.
-- Desktop controls: Left/Right or A/D to steer, Space or S to brake, C to change camera, Escape to pause.
+- Desktop controls: Left/Right or A/D to steer, Down/Space/S to brake, C to change camera, Escape to pause.
 - Mobile controls: translucent circular left, right, and brake buttons positioned as overlays without covering critical play space.
 - Pause is authoritative and shared with every connected player.
 - The PWA remains installable with manifest, favicon/app icon, service worker, standalone display, and mobile safe-area support.
 
 ## Movement and Armagetron-style dynamics
 
-- Base speed is approximately 16 world units/second, with a high grind-driven maximum near 65 (about 234 km/h on the HUD).
+- Base speed is approximately 16 world units/second, with a high grind-driven maximum near 82 (about 295 km/h on the HUD).
 - Turning reduces speed slightly. Local turns are applied immediately when a key or touch control is pressed; a roughly 45 ms anti-spam cooldown buffers the latest turn instead of discarding it.
-- Braking consumes a rechargeable brake-energy meter and cannot reduce speed below a safe minimum.
-- Riding parallel within about 7.5 world units of a finalized wall produces “grind” against both own and other riders’ trails. The effect grows continuously and nearly linearly with proximity, drives visible rear indicators and pitch, and adds roughly `24 × proximity` world units/second² up to the speed cap; it must be clearly perceptible even before the rider is almost touching the wall.
+- Braking consumes a rechargeable brake-energy meter, decelerates at roughly 23 world units/second², and cannot reduce speed below a safe minimum.
+- Riding parallel within about 7.5 world units of a finalized wall produces “grind” against both own and other riders’ trails. The effect remains continuous across the whole range but uses a progressive curve (`0.28t + 0.72t^2.2`) so reducing an already small gap—for example from 2 units to 1—creates a clearly larger acceleration difference. It drives visible rear flames and pitch and adds roughly `28 × proximity` world units/second² up to the speed cap.
 - Parallel-wall filtering compares each wall with the bike’s forward orientation, never with the perpendicular side-probe direction.
-- “Rubber” allows a brief, visibly tense approach to a wall before the crash. It must not permit tunneling or crossing.
+- “Rubber” allows a brief, visibly tense approach to a wall before the crash. Its stress accumulation is deliberately brisk—roughly 15% faster than the earlier baseline—so a rider cannot remain pressed against a trail. It must not permit tunneling or crossing.
+- The HUD rubber percentage represents the remaining elastic anti-collision margin: approaching a perpendicular trail consumes it, and remaining pressed against the trail until it is exhausted causes a crash. Keep a concise explanatory tooltip because the term is intentionally inherited from Armagetron.
 - Collision geometry is strictly 2D and zero-thickness: the moving bike is represented by one point on the floor plane and every trail by its mathematical line segment, equivalent to a 1 px collision line. There is no bike radius, wall thickness, bounding volume, or collision against bike models, particles, grid effects, or other decorative geometry.
 - A forward swept point tests only trail segments perpendicular to the cast direction. Parallel walls are handled exclusively by lateral grind probes and can be approached arbitrarily closely without collision. Any positive mathematical gap between two parallel trails remains traversable, however narrow.
 - AI is leashed to the active human/major rider cluster so it does not disappear across the infinite grid, but it must not crowd or deliberately ram the player.
@@ -57,6 +58,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Use two large wheels aligned on the centerline, with twin luminous ring outlines, restrained spokes, a low angular fairing, dark core, luminous side rails, small canopy, and pointed forward silhouette.
 - Geometry stays code-native WebGL; do not add heavyweight 3D model dependencies unless the product direction explicitly changes.
 - Keep the top of the model near the configured wall height and keep the silhouette legible from chase and top-down views.
+- Two rear thrust flames remain visible at ordinary speed and become substantially longer and brighter with both absolute speed and positive grind acceleration. Their outer glow follows the rider color and their hot core remains warm and bright.
 
 ## Infinite grid and circuit-board world
 
@@ -65,7 +67,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - The floor remains dark enough that walls, bikes, and hazards dominate.
 - Circuit-board traces are deterministic per fixed 80-unit world tile. Re-entering an area must reproduce the same geometry.
 - Traces use right-angle paths and chip-like rectangular pads at floor level.
-- Each circuit path carries two bright linear electric impulses with a roughly 6-unit tail. They move very quickly along the permanent path and visibly follow its 90-degree turns. Do not render a separate leading point: isolated WebGL points can look like a stray cursor or targeting reticle near screen center.
+- Each circuit path carries two thin red LED/laser impulses. They move very quickly along the permanent path and visibly follow its 90-degree turns. Each uses a deterministic varied tail length of roughly 3–7 units, segmented alpha that fades toward the rear, and a much brighter hot leading tip. Do not render a separate leading point: isolated WebGL points can look like a stray cursor or targeting reticle near screen center.
 - Floor impulses must not resemble a rider, wall, or collision hazard.
 - The start screen shows the grid and moving electrical impulses behind the menu. Menu motion uses real elapsed time even before the simulation starts.
 - Cull walls by the focus point’s distance to the wall segment, never by distance to the segment midpoint. Long active/finalized walls must remain visible whenever any part of them intersects the render radius.
@@ -78,6 +80,9 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Names are generated automatically from short neon/computer-themed word pairs, saved locally, limited to 18 characters, and editable in real time from the leaderboard or multiplayer dialog.
 - Human connection state and AI state must be distinguishable.
 - The leaderboard must remain compact at mobile widths and must not collide with touch controls.
+- A north-up minimap sits at bottom-right, centered on the local bike, and shows a relatively wide roughly 230-unit square of the world-fixed grid, nearby finalized/active walls, every live bike in its rider color, and a highlighted local marker. It updates at a restrained rate and uses cheap bounds culling so indefinite wall growth does not add unnecessary per-frame work.
+- On touch/mobile layouts the minimap moves above the steering controls instead of overlapping them.
+- Online play exposes the current room ID persistently beneath the leaderboard header; activating it copies the ID. The complete invitation link remains in the `∞` multiplayer panel.
 
 ## Multiplayer and rooms
 
@@ -85,10 +90,13 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Do not require manual offer/answer copy-and-paste or a ping-pong exchange of links.
 - Automatic peer discovery uses Trystero `0.25.3` over its default decentralized Nostr strategy, imported from `https://esm.run/trystero@0.25.3`.
 - Gameplay data travels through encrypted WebRTC peer connections. Public relays are used only for discovery/signaling.
-- Public matchmaking joins the fixed `PUBLIC-01` room. The first rider becomes host; later riders discover it automatically.
-- The main-menu “Partita pubblica” button immediately opens the public connection state and starts discovery in one action. The top `∞` control opens the full public/private room chooser.
-- Private rooms use an editable room code and shared key. “Create private” generates missing values and one reusable invitation URL. The key stays in the URL fragment so it is not sent in the HTTP request.
-- Opening a private invitation URL auto-fills and joins the room without a return link.
+- Every gameplay room has its own sanitized, shareable ID. Public IDs are generated as `PUB-XXXXXX`; private IDs are generated as high-entropy `PRI-XXXXXXXXXX` values.
+- Public and private rooms use the same host-authoritative gameplay transport. Their only product-level difference is discoverability: public rooms are advertised to random riders, while private rooms are unlisted and require their ID or invitation link.
+- Public matchmaking uses a separate, fixed Trystero/Nostr directory rendezvous room. Public hosts send only short-lived advertisements containing room ID, connected-player count, capacity, and free slots. The directory stores no gameplay state and has no persistent database.
+- “Trova partita” joins an advertised public room with a free slot, or creates a fresh uniquely identified public room when none answers. A stale full-room result automatically resumes matchmaking.
+- “Nuova pubblica” always generates a new public room. “Entra con ID” joins the requested public room directly. A public room’s creator or participant can share either its displayed ID or its reusable public invitation URL.
+- The main-menu “Partita pubblica” button immediately starts public matchmaking in one action. The top `∞` control opens the full public/private room chooser.
+- Private rooms have one editable room ID and one reusable invitation URL; there is no second key or password field. Opening either a public or private invitation URL auto-fills and joins the intended room without a return-link exchange.
 - Maximum human count is controlled by the host’s slider, currently 2–6. Excess riders receive a clear “room full” state.
 - If no host is found after a short discovery window, the local peer becomes host. Simultaneous hosts resolve deterministically by peer ID. If a host leaves, remaining peers attempt a deterministic re-election; resetting the authoritative round during migration is acceptable, but the room must remain usable.
 - WebRTC can still fail on restrictive networks without TURN. Communicate that limitation honestly; do not claim that “no owned server” means “no external signaling infrastructure”.
@@ -117,6 +125,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Avoid visual effects above floor level that could be confused with walls or bikes.
 - Menus use crisp geometric panels, thin borders, compact uppercase labels, and no rounded dashboard-card aesthetic.
 - Preserve keyboard accessibility labels and visible focus styling.
+- The top-right options bar uses recognizable line icons, explicit desktop labels, accessible names, and concise hover/focus tooltips for multiplayer, options, shared pause, and audio. It collapses to compact icon-only controls on narrow screens.
 
 ## Networking and safety invariants
 
@@ -140,7 +149,7 @@ Before publishing any gameplay change:
 8. Confirm grid lines remain fixed relative to old walls while crossing several major cells.
 9. Confirm electrical paths are fixed, pulses move quickly through their 90-degree turns, and the start-screen background animates.
 10. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
-11. Test automatic public connection and one-link private connection with two independent browser contexts/devices when possible.
+11. With independent browser contexts/devices, confirm public matchmaking finds an advertised room, two different public IDs stay isolated, the same public ID connects peers, public ID/link invitations auto-join, and private ID/link invitations work without appearing in public matchmaking.
 12. Check desktop around 1440×900 and mobile around 390×844, including touch controls and leaderboard.
 13. Check browser console for errors, manifest/icon/service-worker endpoints, audio behavior across play/pause/menu/tab visibility, and that the echo feedback remains restrained without runaway buildup.
 14. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
