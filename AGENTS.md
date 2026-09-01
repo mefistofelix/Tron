@@ -30,15 +30,17 @@ The canonical implementation is intentionally dependency-light and centered on `
 - Riding parallel within about 7.5 world units of a finalized wall produces “grind” against both own and other riders’ trails. The effect grows continuously and nearly linearly with proximity, drives visible rear indicators and pitch, and adds roughly `24 × proximity` world units/second² up to the speed cap; it must be clearly perceptible even before the rider is almost touching the wall.
 - Parallel-wall filtering compares each wall with the bike’s forward orientation, never with the perpendicular side-probe direction.
 - “Rubber” allows a brief, visibly tense approach to a wall before the crash. It must not permit tunneling or crossing.
-- Collision tests expand walls once by half the visual thickness plus the cycle radius (currently about 0.465 world units total), then compare the returned forward clearance directly with the swept movement. Never add the cycle radius a second time. AI and humans obey the same collision geometry.
-- A forward collision ray tests only walls perpendicular to the cast direction. Parallel walls are handled exclusively by the lateral grind probes; including their expanded bounding boxes in the forward ray causes false distance-zero crashes while riding alongside a trail.
+- Collision geometry is strictly 2D and zero-thickness: the moving bike is represented by one point on the floor plane and every trail by its mathematical line segment, equivalent to a 1 px collision line. There is no bike radius, wall thickness, bounding volume, or collision against bike models, particles, grid effects, or other decorative geometry.
+- A forward swept point tests only trail segments perpendicular to the cast direction. Parallel walls are handled exclusively by lateral grind probes and can be approached arbitrarily closely without collision. Any positive mathematical gap between two parallel trails remains traversable, however narrow.
 - AI is leashed to the active human/major rider cluster so it does not disappear across the infinite grid, but it must not crowd or deliberately ram the player.
 - AI must treat finalized and active trails as solid. It may use the same rubber mechanic but must never visually pass through a wall.
+- AI steering must favor long, readable straight runs. Normal tactical decisions are spaced roughly 1.5–3.6 seconds apart, each AI turn has an additional ~0.38-second anti-zig-zag lock, and aimless turns are rare.
+- When the nearest human is roughly 10–58 units away, an AI may occasionally target a predicted point 14–34 units ahead of that rider to lay a cutting trail across the future route. It must still prioritize open space, turn away inside about 6.5 units, and never directly home into the rider.
 
 ## Trails, corners, and crashes
 
 - A trail segment reaches the exact turn point. Adjacent segments share their endpoint, so the single central translucent wall surfaces meet without a visual or collision gap at a 90-degree corner. Do not render two parallel wall faces: from above that reads as an incorrect double trail.
-- The active trail ends at the bike center. A rider’s own finalized trails are fully solid. Collision code exempts only the exact wall ID created at the latest turn, and only while the bike is within about 1.35 units of that junction; it must never use a generic “ignore any nearby own wall” rule.
+- The active trail ends at the bike point. A rider’s own finalized trails are fully solid. Collision code exempts only the exact wall ID created at the latest turn and only for the first roughly 0.12 world units leaving that junction; it must never use a generic “ignore any nearby own wall” rule.
 - Trail-wall height matches the visual bike height: approximately 1.48 world units, not a tall building-sized barrier.
 - Walls are slightly transparent, luminous, readable, and never mistaken for the floor circuitry.
 - On crash, the cycle explodes and cuts a traversable gap through nearby walls. The opening must be useful but not excessively wide.
@@ -103,6 +105,7 @@ The canonical implementation is intentionally dependency-light and centered on `
 
 - Audio is synthesized with Web Audio: engine, higher-frequency whine, acceleration/grind pitch, turns, sparks/crash noise, and restrained electronic background music.
 - Speed and wall proximity raise engine/whine pitch smoothly.
+- Motor, high-frequency whine, turn cues, sparks, and crash noise feed a short 180 ms Web Audio delay with restrained feedback and return gain. Background music stays dry so the mix remains readable.
 - The original audio lifecycle is retained: solo simulation pauses automatically when its document becomes hidden, while the browser owns the Web Audio context lifecycle for a closed tab.
 - Do not add unload, forced suspension, or audio-context shutdown logic solely to compensate for another still-open browser tab.
 - Mute preference is device-local.
@@ -131,14 +134,16 @@ Before publishing any gameplay change:
 2. Verify solo with 0 AI remains active after crashes and respawns.
 3. Drive repeated left/right squares and confirm there are no corner gaps.
 4. Observe multiple AI for several minutes and confirm none crosses a wall.
-5. Confirm wall height visually matches the bike.
-6. Confirm grid lines remain fixed relative to old walls while crossing several major cells.
-7. Confirm electrical paths are fixed, pulses move quickly through their 90-degree turns, and the start-screen background animates.
-8. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
-9. Test automatic public connection and one-link private connection with two independent browser contexts/devices when possible.
-10. Check desktop around 1440×900 and mobile around 390×844, including touch controls and leaderboard.
-11. Check browser console for errors, manifest/icon/service-worker endpoints, and audio behavior across play, pause, menu, and tab visibility.
-12. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
+5. Construct two extremely close parallel trails and confirm a bike point can traverse any positive-width corridor between them without collision.
+6. Observe AI near a human: straight runs should dominate, turns must not chatter, and occasional predicted-route cuts should be visible without direct ramming.
+7. Confirm wall height visually matches the bike.
+8. Confirm grid lines remain fixed relative to old walls while crossing several major cells.
+9. Confirm electrical paths are fixed, pulses move quickly through their 90-degree turns, and the start-screen background animates.
+10. Verify crash camera, silent wait, safe cluster respawn, and invulnerability ring.
+11. Test automatic public connection and one-link private connection with two independent browser contexts/devices when possible.
+12. Check desktop around 1440×900 and mobile around 390×844, including touch controls and leaderboard.
+13. Check browser console for errors, manifest/icon/service-worker endpoints, audio behavior across play/pause/menu/tab visibility, and that the echo feedback remains restrained without runaway buildup.
+14. Regenerate `dist/server/index.js` with `build-worker.mjs` after every `index.html` change.
 
 ## Maintenance rule
 
