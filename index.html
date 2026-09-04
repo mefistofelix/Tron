@@ -123,10 +123,12 @@
 
     const COLORS=['#31ecff','#ff3da8','#ffd84a','#76ff74','#9d7bff','#ff784f','#38ffbd','#ff69e1','#b9ff4d','#48a7ff','#ffb347','#d7f2ff'];
     const DIRS=[{x:0,z:-1},{x:1,z:0},{x:0,z:1},{x:-1,z:0}];
-    const cfg={baseSpeed:22.2,maxSpeed:82,minSpeed:7.5,turnFactor:.94,turnDelay:.008,wallNear:7.5,wallHeight:1.48,blastRadius:4.4,cornerEps:.025};
+    const cfg={baseSpeed:22.2,maxSpeed:82,minSpeed:7.5,turnFactor:.94,turnDelay:.008,wallNear:7.5,wallHeight:1.48,blastRadius:4.4};
+    const SIM_DT=1/60,NET_PROTOCOL=5;
+
     function storedInt(key,fallback,min,max){const n=Number.parseInt(localStorage.getItem(key),10);return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback}
-    const state={mode:'menu',running:false,time:0,round:0,roundEnding:false,cycles:[],walls:[],particles:[],scores:[],chat:[],nextWall:1,nextCycle:100,accum:0,last:performance.now(),sendClock:0,camMode:storedInt('grid-camera',0,0,2),localId:0,shake:0,aiCount:storedInt('grid-ai-count',3,0,6),maxHumans:storedInt('grid-max-humans',4,2,6),clearTrailsOnCrash:false,roomId:'',deathCam:null,leaderSig:'',leaderRenderAt:0};
-    let isHost=false,toastTimer=0,installPrompt=null,autoRoom=null,autoAction=null,autoSelf='',autoHostPeer='',autoConnectTimer=0,autoRoomId='',autoIsPublic=false,publicJoinMode='',publicInviteLink='',privateInviteLink='',directoryRoom=null,directoryAction=null,directoryTimer=0,publicMatchTimer=0,publicProbeTimers=[],publicMatchPending=false,minimapAt=0,guestInputSeq=0,guestPendingTurns=[],predictedWalls=[];
+    const state={mode:'menu',running:false,time:0,tick:0,wallRevision:0,needsSnapshot:false,round:0,roundEnding:false,cycles:[],walls:[],particles:[],scores:[],chat:[],nextWall:1,nextCycle:100,accum:0,last:performance.now(),sendClock:0,camMode:storedInt('grid-camera',0,0,2),localId:0,shake:0,aiCount:storedInt('grid-ai-count',3,0,6),maxHumans:storedInt('grid-max-humans',4,2,6),clearTrailsOnCrash:false,roomId:'',deathCam:null,leaderSig:'',leaderRenderAt:0};
+    let isHost=false,toastTimer=0,installPrompt=null,autoRoom=null,autoAction=null,autoSelf='',autoHostPeer='',autoConnectTimer=0,autoRoomId='',autoIsPublic=false,publicJoinMode='',publicInviteLink='',privateInviteLink='',directoryRoom=null,directoryAction=null,directoryTimer=0,publicMatchTimer=0,publicProbeTimers=[],publicMatchPending=false,minimapAt=0,guestInputSeq=0,guestPendingTurns=[],predictedWalls=[],guestTick=0,guestAnchor=null,netRtt=.1,netPingAt=0,lastSnapshotTick=-1,guestAck=0,pendingGuestSnapshot=null,resyncAt=0;
     const hostPeers=new Map(),chatSeen=new Set(),publicCandidates=new Map();
 
     function hex(h,a=1){h=h.replace('#','');return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255,a]}
@@ -134,9 +136,12 @@
     function autoName(){const saved=localStorage.getItem('grid-rider-name');if(saved)return saved.slice(0,18);const name=RIDER_A[Math.random()*RIDER_A.length|0]+' '+RIDER_B[Math.random()*RIDER_B.length|0];localStorage.setItem('grid-rider-name',name);return name}
     function cleanName(value){return String(value||'').trim().replace(/\s+/g,' ').slice(0,18)||autoName()}
     function localCycle(){return state.cycles.find(c=>c.id===state.localId)}
-    function makeCycle(id,name,color,x,z,dir,human=false,ai=!human){return{id,name,color,x,z,tx:x,tz:z,dir,tdir:dir,speed:cfg.baseSpeed,brake:false,brakeEnergy:1,rubber:0,rubberWall:null,grind:0,alive:true,human,ai,turnQueue:[],turnCooldown:0,inputAck:0,trailX:x,trailZ:z,trailEntryDir:null,ignoreWall:0,junctionX:x,junctionZ:z,nextAI:1+Math.random()*1.2,deathAt:0,respawnAt:0,invuln:0,deaths:0}}
-    function packCycle(c){return{id:c.id,name:c.name,color:c.color,human:!!c.human,ai:!!c.ai,x:+c.x.toFixed(3),z:+c.z.toFixed(3),dir:c.dir,speed:+c.speed.toFixed(2),brakeEnergy:+c.brakeEnergy.toFixed(3),rubber:+c.rubber.toFixed(3),grind:+c.grind.toFixed(3),alive:c.alive,inputAck:c.inputAck||0,trailX:+c.trailX.toFixed(3),trailZ:+c.trailZ.toFixed(3),deathAt:+(c.deathAt||0).toFixed(2),respawnAt:+(c.respawnAt||0).toFixed(2),invuln:+(c.invuln||0).toFixed(2),deaths:c.deaths||0}}
-    function packWall(w){return{id:w.id,owner:w.owner,x1:+w.x1.toFixed(3),z1:+w.z1.toFixed(3),x2:+w.x2.toFixed(3),z2:+w.z2.toFixed(3),color:w.color,born:+w.born.toFixed(2),expire:w.expire==null?null:+w.expire.toFixed(2),inputSeq:w.inputSeq||0,entryDir:Number.isInteger(w.entryDir)?w.entryDir:null,entryX:Number.isFinite(w.entryX)?+w.entryX.toFixed(3):null,entryZ:Number.isFinite(w.entryZ)?+w.entryZ.toFixed(3):null}}
+    function makeCycle(id,name,color,x,z,dir,human=false,ai=!human){return{id,name,color,x,z,tx:x,tz:z,dir,tdir:dir,speed:cfg.baseSpeed,brake:false,brakeEnergy:1,rubber:0,rubberWall:null,grind:0,alive:true,human,ai,turnQueue:[],turnCooldown:0,inputAck:0,life:1,trailX:x,trailZ:z,ignoreWall:0,junctionX:x,junctionZ:z,nextAI:1+Math.random()*1.2,deathAt:0,respawnAt:0,invuln:0,deaths:0}}
+
+    function packCycle(c){return{id:c.id,name:c.name,color:c.color,human:!!c.human,ai:!!c.ai,x:c.x,z:c.z,dir:c.dir,speed:c.speed,brake:!!c.brake,brakeEnergy:c.brakeEnergy,rubber:c.rubber,rubberWall:c.rubberWall,grind:c.grind,alive:c.alive,inputAck:c.inputAck||0,life:c.life,turnCooldown:c.turnCooldown,trailX:c.trailX,trailZ:c.trailZ,ignoreWall:c.ignoreWall,junctionX:c.junctionX,junctionZ:c.junctionZ,deathAt:c.deathAt||0,respawnAt:c.respawnAt||0,invuln:c.invuln||0,deaths:c.deaths||0}}
+
+    function packWall(w){return{id:w.id,owner:w.owner,x1:w.x1,z1:w.z1,x2:w.x2,z2:w.z2,color:w.color,born:w.born,expire:w.expire??null,inputSeq:w.inputSeq||0,life:w.life}}
+
 
     class Soundscape{
       constructor(){this.ctx=null;this.master=null;this.musicBus=null;this.engine=null;this.engineGain=null;this.whine=null;this.whineGain=null;this.filter=null;this.echo=null;this.musicTimer=0;this.step=0;this.musicStarted=false;this.unlockCuePlayed=false;this.muted=localStorage.getItem('grid-muted')==='1';this.musicEnabled=localStorage.getItem('grid-music')!=='0'}
@@ -174,7 +179,7 @@
     function sendChat(value){const text=cleanChatText(value),c=localCycle();if(!text||!c)return;const message={id:c.id+':'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7),text,name:c.name,color:c.color,at:Date.now()};acceptChat(message);if(state.mode==='host'||state.mode==='guest')netSend({t:'chat',message})}
     function startSolo(){audio.init();clearCurrentInvite();resetChat();resetGuestPrediction();applyLocalPreferences();isHost=false;state.mode='solo';state.localId=0;state.scores=[];$('#aiRange').disabled=false;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;$('#clearTrailsToggle').checked=false;resetRound();$('#chatBtn').disabled=false;document.body.classList.add('playing');closeNetwork();$('#resultWrap').classList.remove('open');showToast('Grid online · stay alive')}
     function beginHostRoom(){audio.init();if(state.mode==='host'&&state.running)return;resetChat();resetGuestPrediction();applyLocalPreferences();if(autoIsPublic){state.aiCount=0;$('#aiRange').value=0;$('#aiValue').textContent='0'}isHost=true;state.mode='host';state.localId=0;state.scores=[];state.roomId=Math.random().toString(36).slice(2,8).toUpperCase();$('#aiRange').disabled=false;$('#maxRange').disabled=false;$('#clearTrailsToggle').disabled=false;resetRound();$('#chatBtn').disabled=false;document.body.classList.add('playing');showToast('Arena open · start riding')}
-    function resetRound(){state.time=0;state.accum=0;state.round++;state.running=true;state.roundEnding=false;state.walls=[];state.particles=[];state.nextWall=1;state.nextCycle=100;state.deathCam=null;state.leaderSig='';$('#resultWrap').classList.remove('open');
+    function resetRound(){state.time=0;state.tick=0;state.wallRevision=0;state.accum=0;state.needsSnapshot=false;resetGuestPrediction();state.round++;state.running=true;state.roundEnding=false;state.walls=[];state.particles=[];state.nextWall=1;state.nextCycle=100;state.deathCam=null;state.leaderSig='';$('#resultWrap').classList.remove('open');
       if(state.mode==='solo')state.cycles=[makeCycle(0,cleanName($('#playerName').value),COLORS[0],0,18,0,true,false)];
       else if(state.mode==='host'){const connected=[...hostPeers.values()];state.cycles=[makeCycle(0,cleanName($('#playerName').value),COLORS[0],-10,8,1,true,false),...connected.map((p,i)=>{const pos=humanSpawn(i+1,connected.length+1);return makeCycle(p.id,p.name||('RIDER '+p.id),COLORS[p.id%COLORS.length],pos.x,pos.z,pos.dir,true,false)})]}
       state.localId=state.mode==='solo'||state.mode==='host'?0:1;syncAICount(state.aiCount,false);updateHUD();if(isHost&&state.mode==='host')sendInit()}
@@ -184,38 +189,199 @@
     function largestClusterCenter(){const alive=state.cycles.filter(c=>c.alive);if(!alive.length)return{x:0,z:0};let best=[];const seen=new Set;for(const seed of alive){if(seen.has(seed.id))continue;const group=[],queue=[seed];seen.add(seed.id);while(queue.length){const c=queue.shift();group.push(c);for(const o of alive)if(!seen.has(o.id)&&Math.hypot(c.x-o.x,c.z-o.z)<82){seen.add(o.id);queue.push(o)}}if(group.length>best.length)best=group}return{x:best.reduce((s,c)=>s+c.x,0)/best.length,z:best.reduce((s,c)=>s+c.z,0)/best.length}}
     function inMovingLane(x,z,ignoreId){for(const o of state.cycles){if(!o.alive||o.id===ignoreId)continue;const d=DIRS[o.dir],dx=x-o.x,dz=z-o.z,forward=dx*d.x+dz*d.z,lateral=Math.abs(dx*(-d.z)+dz*d.x);if(forward>0&&forward<25&&lateral<6.5)return true}return false}
     function safeRespawn(c){const center=largestClusterCenter(),alive=state.cycles.filter(o=>o.alive&&o.id!==c.id);let best=null,bestScore=-1e9;for(const radius of [23,29,36,43])for(let i=0;i<20;i++){const a=i/20*Math.PI*2+state.time*.071,x=center.x+Math.cos(a)*radius,z=center.z+Math.sin(a)*radius,cycleGap=alive.reduce((m,o)=>Math.min(m,Math.hypot(x-o.x,z-o.z)),999),wallGap=state.walls.reduce((m,w)=>Math.min(m,pointSegDistance(x,z,w)),999);if(cycleGap<11||wallGap<4.2||inMovingLane(x,z,c.id))continue;for(let dir=0;dir<4;dir++){const probe={...c,x,z,dir},clear=rayDistance(probe,DIRS[dir],55),score=Math.min(clear,38)+Math.min(cycleGap,26)*.4+Math.min(wallGap,15)*.5-Math.abs(radius-29)*.22;if(clear>8&&score>bestScore){bestScore=score;best={x,z,dir}}}}return best||{x:center.x+31,z:center.z+31,dir:3}}
-    function respawnCycle(c){const p=safeRespawn(c);Object.assign(c,{x:p.x,z:p.z,tx:p.x,tz:p.z,dir:p.dir,tdir:p.dir,speed:cfg.baseSpeed,brake:false,brakeEnergy:1,rubber:0,rubberWall:null,grind:0,alive:true,turnQueue:[],turnCooldown:.5,inputAck:0,trailX:p.x,trailZ:p.z,trailEntryDir:null,ignoreWall:0,junctionX:p.x,junctionZ:p.z,nextAI:1.1+Math.random()*1.4,respawnAt:0,invuln:1.15});if(c.id===state.localId){state.deathCam=null;resetGuestPrediction()}state.leaderSig='';if(isHost&&state.mode==='host')sendInit()}
-    function syncAICount(target,broadcast=true){target=clamp(+target||0,0,6);state.aiCount=target;state.running=true;state.roundEnding=false;$('#resultWrap').classList.remove('open');const bots=state.cycles.filter(c=>c.ai);if(bots.length>target){const remove=new Set(bots.slice(target).map(c=>c.id));state.cycles=state.cycles.filter(c=>!remove.has(c.id));state.walls=state.walls.filter(w=>!remove.has(w.owner))}else for(let i=bots.length;i<target;i++){const p=safeBotSpawn(i),id=state.nextCycle++;state.cycles.push(makeCycle(id,['NOVA','VOLT','ECHO','FLUX','ION','PRISM'][i],COLORS[(i+2)%COLORS.length],p.x,p.z,p.dir,false,true))}state.leaderSig='';if(broadcast&&isHost&&state.mode==='host')sendInit()}
+    function respawnCycle(c){const p=safeRespawn(c);Object.assign(c,{x:p.x,z:p.z,tx:p.x,tz:p.z,dir:p.dir,tdir:p.dir,speed:cfg.baseSpeed,brake:false,brakeEnergy:1,rubber:0,rubberWall:null,grind:0,alive:true,turnQueue:[],turnCooldown:0,life:c.life+1,trailX:p.x,trailZ:p.z,ignoreWall:0,junctionX:p.x,junctionZ:p.z,nextAI:1.1+Math.random()*1.4,respawnAt:0,invuln:1.15});if(c.id===state.localId)state.deathCam=null;state.leaderSig='';if(isHost&&state.mode==='host')state.needsSnapshot=true}
+
+    function syncAICount(target,broadcast=true){target=clamp(+target||0,0,6);state.aiCount=target;state.running=true;state.roundEnding=false;$('#resultWrap').classList.remove('open');const bots=state.cycles.filter(c=>c.ai);if(bots.length>target){const remove=new Set(bots.slice(target).map(c=>c.id));state.cycles=state.cycles.filter(c=>!remove.has(c.id));state.walls=state.walls.filter(w=>!remove.has(w.owner));state.wallRevision++}else for(let i=bots.length;i<target;i++){const p=safeBotSpawn(i),id=state.nextCycle++;state.cycles.push(makeCycle(id,['NOVA','VOLT','ECHO','FLUX','ION','PRISM'][i],COLORS[(i+2)%COLORS.length],p.x,p.z,p.dir,false,true))}state.leaderSig='';if(broadcast&&isHost&&state.mode==='host')sendInit()}
     function goMenu(){state.running=false;state.mode='menu';state.cycles=[];state.walls=[];resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;setOnlineLoading(false);document.body.classList.remove('playing');$('#resultWrap').classList.remove('open');closeNetwork();setRulesOpen(false);hostPeers.clear();if(autoRoom)try{autoRoom.leave()}catch{}autoRoom=autoAction=null;autoHostPeer='';autoIsPublic=false;publicJoinMode='';closePublicDirectory();clearCurrentInvite();applyLocalPreferences();$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true}
 
-    function activeSegment(c){const immune=c.invuln>0,x1=immune?c.x:c.trailX,z1=immune?c.z:c.trailZ;return{x1,z1,x2:c.x,z2:c.z,owner:c.id,color:c.color,active:true,entryDir:immune?null:c.trailEntryDir,entryX:x1,entryZ:z1}}
-    function finalizedWall(c,inputSeq=0){const s=activeSegment(c);if(Math.hypot(s.x2-s.x1,s.z2-s.z1)<.28)return null;const w={...s,id:state.nextWall++,born:state.time,expire:null,active:false,inputSeq:inputSeq||0};state.walls.push(w);if(isHost&&state.mode==='host')netSend({t:'wall',wall:packWall(w)});return w}
-    function rayRect(ox,oz,dx,dz,minx,maxx,minz,maxz){let lo=-Infinity,hi=Infinity;if(Math.abs(dx)<1e-8){if(ox<minx||ox>maxx)return Infinity}else{let a=(minx-ox)/dx,b=(maxx-ox)/dx;if(a>b)[a,b]=[b,a];lo=Math.max(lo,a);hi=Math.min(hi,b)}if(Math.abs(dz)<1e-8){if(oz<minz||oz>maxz)return Infinity}else{let a=(minz-oz)/dz,b=(maxz-oz)/dz;if(a>b)[a,b]=[b,a];lo=Math.max(lo,a);hi=Math.min(hi,b)}return hi>=Math.max(0,lo)?Math.max(0,lo):Infinity}
-    function rayCast(c,dir,max=999,parallelOnly=false,withOwner=false){let best=max,owner=null,wallId=null;const endX=c.x+dir.x*max,endZ=c.z+dir.z*max,qMinX=Math.min(c.x,endX)-.001,qMaxX=Math.max(c.x,endX)+.001,qMinZ=Math.min(c.z,endZ)-.001,qMaxZ=Math.max(c.z,endZ)+.001,consider=w=>{if(w.active&&w.owner===c.id)return;const horizontal=Math.abs(w.z1-w.z2)<.01,castHorizontal=Math.abs(dir.x)>0;if(parallelOnly){const bikeMovesHorizontal=Math.abs(DIRS[c.dir].x)>0;if(horizontal!==bikeMovesHorizontal)return}else if(horizontal===castHorizontal)return;const minx=Math.min(w.x1,w.x2),maxx=Math.max(w.x1,w.x2),minz=Math.min(w.z1,w.z2),maxz=Math.max(w.z1,w.z2);if(maxx<qMinX||minx>qMaxX||maxz<qMinZ||minz>qMaxZ)return;const t=rayRect(c.x,c.z,dir.x,dir.z,minx,maxx,minz,maxz),hitX=c.x+dir.x*t,hitZ=c.z+dir.z*t,leavingJunction=w.owner===c.id&&w.id===c.ignoreWall&&Math.hypot(c.x-c.junctionX,c.z-c.junctionZ)<.12&&t<.12,skimmingOwnCorner=!parallelOnly&&w.owner===c.id&&w.entryDir===c.dir&&Number.isFinite(w.entryX)&&Number.isFinite(w.entryZ)&&Math.hypot(hitX-w.entryX,hitZ-w.entryZ)<=cfg.cornerEps;if(leavingJunction||skimmingOwnCorner)return;if(t<best){best=t;owner=w.owner;wallId=w.id??('active:'+w.owner)}};for(const w of state.walls)consider(w);for(const other of state.cycles)if(other.alive){const w=activeSegment(other);if(Math.hypot(w.x2-w.x1,w.z2-w.z1)>.2)consider(w)}return withOwner?{distance:best,owner,wallId}:best}
+    function activeSegment(c){const immune=c.invuln>0;return{x1:immune?c.x:c.trailX,z1:immune?c.z:c.trailZ,x2:c.x,z2:c.z,owner:c.id,color:c.color,life:c.life,active:true}}
+    function finalizedWall(c,inputSeq=0,prediction=false){
+      const s=activeSegment(c);if(s.x1===s.x2&&s.z1===s.z2)return null;
+      const w={...s,id:prediction?'predicted:'+c.life+':'+inputSeq:state.nextWall++,born:state.time,expire:null,active:false,inputSeq};
+      if(prediction)predictedWalls.push(w);else{state.walls.push(w);state.wallRevision++;if(isHost&&state.mode==='host')netSend({t:'wall',round:state.round,revision:state.wallRevision,wall:packWall(w)})}
+      return w
+    }
+    // Exact planar ray/segment intersection. A positive parallel gap is never a hit.
+    function segmentDistance(c,dir,w){
+      const horizontal=w.z1===w.z2,vertical=w.x1===w.x2;
+      if((!horizontal&&!vertical)||(horizontal&&vertical))return Infinity;
+      const castHorizontal=dir.x!==0,origin=castHorizontal?c.x:c.z,side=castHorizontal?c.z:c.x,sign=castHorizontal?dir.x:dir.z;
+      let t;
+      if(horizontal===castHorizontal){
+        const fixed=horizontal?w.z1:w.x1;if(side!==fixed)return Infinity;
+        const a=horizontal?w.x1:w.z1,b=horizontal?w.x2:w.z2,near=(Math.min(a,b)-origin)*sign,far=(Math.max(a,b)-origin)*sign;
+        const enter=Math.min(near,far),exit=Math.max(near,far);if(exit<0)return Infinity;
+        t=Math.max(0,enter);
+        if(w.id===c.ignoreWall&&w.owner===c.id&&c.x===c.junctionX&&c.z===c.junctionZ&&exit===0)return Infinity
+      }else{
+        const a=castHorizontal?w.z1:w.x1,b=castHorizontal?w.z2:w.x2;
+        if(side<Math.min(a,b)||side>Math.max(a,b))return Infinity;
+        t=((castHorizontal?w.x1:w.z1)-origin)*sign;if(t<0)return Infinity;
+        if(t===0&&w.id===c.ignoreWall&&w.owner===c.id&&c.x===c.junctionX&&c.z===c.junctionZ)return Infinity
+      }
+      return t
+    }
+    function rayCast(c,dir,max=999,parallelOnly=false,withOwner=false){
+      let best=max,owner=null,wallId=null;
+      const ex=c.x+dir.x*max,ez=c.z+dir.z*max,minX=Math.min(c.x,ex),maxX=Math.max(c.x,ex),minZ=Math.min(c.z,ez),maxZ=Math.max(c.z,ez);
+      const consider=w=>{
+        if(w.active&&w.owner===c.id)return;
+        if(parallelOnly&&(w.z1===w.z2)!==(DIRS[c.dir].x!==0))return;
+        if(Math.max(w.x1,w.x2)<minX||Math.min(w.x1,w.x2)>maxX||Math.max(w.z1,w.z2)<minZ||Math.min(w.z1,w.z2)>maxZ)return;
+        const t=segmentDistance(c,dir,w);
+        if(t<best||(t===best&&owner===null)){best=t;owner=w.owner;wallId=w.id??('active:'+w.owner+':'+w.life)}
+      };
+      for(const w of state.walls)if(visibleWall(w))consider(w);
+      if(state.mode==='guest'&&c.id===state.localId)for(const w of predictedWalls)consider(w);
+      for(const other of state.cycles)if(other.alive)consider(activeSegment(other));
+      return withOwner?{distance:owner===null?Infinity:best,owner,wallId}:best
+    }
     function rayDistance(c,dir,max=999,parallelOnly=false){return rayCast(c,dir,max,parallelOnly)}
     function rayHit(c,dir,max=999){return rayCast(c,dir,max,false,true)}
     function sideGrind(c){const left=DIRS[(c.dir+3)%4],right=DIRS[(c.dir+1)%4],l=rayDistance(c,left,cfg.wallNear,true),r=rayDistance(c,right,cfg.wallNear,true),proximity=d=>{if(d>=cfg.wallNear)return 0;const t=1-d/cfg.wallNear;return .28*t+.72*Math.pow(t,2.2)};return clamp(proximity(l)+proximity(r),0,1.6)}
     function queueTurn(c,side){if(!c||!c.alive)return;if(c.turnCooldown<=0){applyTurn(c,side);return}c.turnQueue[0]=side}
-    function applyTurn(c,side,inputSeq=0){const incoming=c.dir,joint=finalizedWall(c,inputSeq);c.ignoreWall=joint?.id||0;c.junctionX=c.x;c.junctionZ=c.z;c.trailX=c.x;c.trailZ=c.z;c.trailEntryDir=incoming;c.dir=(c.dir+(side==='right'?1:3))%4;c.tdir=c.dir;c.speed=Math.max(cfg.minSpeed,c.speed*cfg.turnFactor);c.turnCooldown=c.ai ? .38 : cfg.turnDelay;if(c.id===state.localId)audio.tone(side==='right'?330:285,.055,'square',.045)}
-    function resetGuestPrediction(){guestInputSeq=0;guestPendingTurns=[];predictedWalls=[]}
-    function predictGuestTurn(c,side,seq){const old=activeSegment(c);if(Math.hypot(old.x2-old.x1,old.z2-old.z1)>.2){predictedWalls.push({...old,id:'predicted:'+seq,seq,active:false,predicted:true});if(predictedWalls.length>8)predictedWalls.shift()}c.junctionX=c.x;c.junctionZ=c.z;c.trailX=c.x;c.trailZ=c.z;c.dir=(c.dir+(side==='right'?1:3))%4;c.tdir=c.dir;c.tx=c.x;c.tz=c.z;c.speed=Math.max(cfg.minSpeed,c.speed*cfg.turnFactor);audio.tone(side==='right'?330:285,.055,'square',.045)}
-    function applyRemoteTurn(c,m){if(!c?.alive)return;const seq=Math.max(0,Math.floor(+m.seq||0));if(seq&&seq<=(c.inputAck||0))return;if(c.turnCooldown>0){if(!seq||!c.turnQueue.some(turn=>turn?.remote&&turn.seq===seq)){c.turnQueue.push({...m,remote:true});if(c.turnQueue.length>12)c.turnQueue.shift()}return}const side=m.action,requestedDir=((Math.floor(+m.dir||0)%4)+4)%4,d=DIRS[c.dir],rx=+m.x,rz=+m.z,dx=c.x-rx,dz=c.z-rz,behind=dx*d.x+dz*d.z,lateral=Math.abs(dx*(-d.z)+dz*d.x),maxLag=clamp(c.speed*.28+1.5,7.5,24.5),available=Math.max(0,(c.x-c.trailX)*d.x+(c.z-c.trailZ)*d.z-.02),valid=Number.isFinite(rx)&&Number.isFinite(rz)&&requestedDir===c.dir&&behind>=-.35&&behind<=maxLag&&lateral<=.8,rewind=valid?Math.min(Math.max(0,behind),available):0;if(rewind>0){c.x-=d.x*rewind;c.z-=d.z*rewind}applyTurn(c,side,seq);if(seq)c.inputAck=seq;if(rewind>0){const nd=DIRS[c.dir],replay=rewind*cfg.turnFactor,hit=rayHit(c,nd,replay+.5),travel=hit.distance<=replay?Math.max(0,hit.distance*.92):replay;c.x+=nd.x*travel;c.z+=nd.z*travel;if(hit.distance<=replay){c.rubber=0;c.rubberWall=hit.wallId}}}
-    function playerAction(action,down=true){audio.init();const c=localCycle();if(!c)return;if(state.mode==='guest'){if((action==='left'||action==='right')&&c.alive){const seq=++guestInputSeq,intent={t:'input',action,down,seq,x:+c.x.toFixed(3),z:+c.z.toFixed(3),dir:c.dir};guestPendingTurns.push({seq,action,at:performance.now()});predictGuestTurn(c,action,seq);netSend(intent)}else if(action==='brake'){c.brake=down;netSend({t:'input',action,down})}return}if(action==='left'||action==='right')queueTurn(c,action);else if(action==='brake')c.brake=down}
-
+    function applyTurn(c,side,inputSeq=0,prediction=false){
+      const joint=finalizedWall(c,inputSeq,prediction);
+      if(joint)c.ignoreWall=joint.id;else if(c.x!==c.junctionX||c.z!==c.junctionZ)c.ignoreWall=0;
+      c.junctionX=c.x;c.junctionZ=c.z;c.trailX=c.x;c.trailZ=c.z;
+      c.dir=(c.dir+(side==='right'?1:3))%4;c.tdir=c.dir;c.speed=Math.max(cfg.minSpeed,c.speed*cfg.turnFactor);c.turnCooldown=c.ai ? .38 : cfg.turnDelay;
+      if(!prediction&&c.id===state.localId)audio.tone(side==='right'?330:285,.055,'square',.045)
+    }
+    function resetGuestPrediction(){guestInputSeq=0;guestPendingTurns=[];predictedWalls=[];guestTick=0;guestAnchor=null;lastSnapshotTick=-1;guestAck=0;pendingGuestSnapshot=null;netPingAt=0}
+    function applyControl(c,m,prediction=false){
+      if(m.action==='left'||m.action==='right')applyTurn(c,m.action,m.seq,prediction);else if(m.action==='brake')c.brake=!!m.down;
+      c.inputAck=m.seq
+    }
+    function queueRemoteInput(c,m){
+      if(!c?.alive||m.round!==state.round||m.life!==c.life||!Number.isSafeInteger(m.seq)||m.seq<=c.inputAck||!['left','right','brake'].includes(m.action))return;
+      if(c.turnQueue.some(x=>x.seq===m.seq)||c.turnQueue.length>=32)return;
+      // The host schedules intent; clients never supply authoritative positions or rewind live walls.
+      const tick=clamp(Number.isSafeInteger(m.tick)?m.tick:state.tick+1,state.tick+1,state.tick+24);
+      c.turnQueue.push({seq:m.seq,action:m.action,down:!!m.down,tick,life:m.life});c.turnQueue.sort((a,b)=>a.seq-b.seq);
+      let next=state.tick+1;for(const command of c.turnQueue){command.tick=Math.max(next,command.tick);next=command.tick+1}
+    }
+    function playerAction(action,down=true){
+      audio.init();const c=localCycle();if(!c||!c.alive||!state.running)return;
+      if(state.mode==='guest'){
+        if(guestPendingTurns.length>=32)return;
+        if(action==='brake'&&(guestPendingTurns.findLast(m=>m.action==='brake')?.down??c.brake)===down)return;
+        const tick=Math.max(guestTick+1,(guestPendingTurns.at(-1)?.tick||0)+1),m={t:'input',seq:++guestInputSeq,action,down,tick,round:state.round,life:c.life};
+        if(action==='left'||action==='right')audio.tone(action==='right'?330:285,.055,'square',.045);
+        guestPendingTurns.push(m);netSend(m);return
+      }
+      if(action==='left'||action==='right')queueTurn(c,action);else if(action==='brake')c.brake=down
+    }
+    function advanceCycle(c,dt,prediction=false){
+      c.turnCooldown=Math.max(0,c.turnCooldown-dt);
+      c.grind=c.invuln>0?0:sideGrind(c);
+      if(c.grind>0)c.speed=Math.min(cfg.maxSpeed,c.speed+c.grind*28*dt);else c.speed+=(cfg.baseSpeed-c.speed)*.68*dt;
+      if(c.brake&&c.brakeEnergy>0){c.speed=Math.max(cfg.minSpeed,c.speed-23*dt);c.brakeEnergy=Math.max(0,c.brakeEnergy-.38*dt)}else c.brakeEnergy=Math.min(1,c.brakeEnergy+.13*dt);
+      let move=c.speed*dt;
+      const immune=c.invuln>0,hit=immune?{distance:Infinity,owner:null,wallId:null}:rayHit(c,DIRS[c.dir],move),front=hit.distance;
+      if(front<=move){
+        c.rubberWall=hit.wallId;
+        move=Math.min(move,Math.max(0,front)*.92);
+        c.rubber=Math.min(1,c.rubber+dt*(1.4+c.speed/cfg.baseSpeed*1.08));
+        if(!prediction)addSparks(c,2);
+        if(c.rubber>=1){if(!prediction){state.lastCollision={id:c.id,x:c.x,z:c.z,dir:c.dir,...hit};crash(c,hit.owner)}return false}
+      }else{c.rubber=Math.max(0,c.rubber-1.15*dt);if(c.rubber===0)c.rubberWall=null}
+      const d=DIRS[c.dir];c.x+=d.x*move;c.z+=d.z*move;
+      if(move>0)c.ignoreWall=0;
+      if(immune){c.trailX=c.x;c.trailZ=c.z;c.invuln=Math.max(0,c.invuln-dt)}
+      if(!prediction&&c.grind>.34&&Math.random()<c.grind*.22)addSparks(c,1);
+      return true
+    }
+    function replayGuestTo(targetTick){
+      const c=localCycle();if(!c||!c.alive)return;
+      targetTick=Math.min(targetTick,guestTick+60);
+      while(guestTick<targetTick){
+        guestTick++;
+        for(const m of guestPendingTurns)if(m.seq>c.inputAck&&m.tick<=guestTick)applyControl(c,m,true);
+        advanceCycle(c,SIM_DT,true)
+      }
+    }
+    function reconcileGuest(o,tick,received=performance.now()){
+      const c=localCycle();if(!c)return;
+      const changedLife=c.life!==o.life,wasAlive=c.alive;
+      guestPendingTurns=guestPendingTurns.filter(m=>m.round===state.round&&m.life===o.life&&m.seq>o.inputAck);
+      if(changedLife||!o.alive)guestPendingTurns=[];
+      predictedWalls=[];guestAck=o.inputAck;Object.assign(c,o,{turnQueue:[],tx:o.x,tz:o.z,tdir:o.dir});
+      guestInputSeq=Math.max(guestInputSeq,o.inputAck);guestTick=tick;guestAnchor={tick,received};
+      if(!o.alive){if(wasAlive)state.deathCam={x:o.x,z:o.z,at:state.time};return}
+      if(changedLife||!wasAlive)state.deathCam=null;
+      const lead=Math.min(.4,netRtt+.035),target=tick+Math.floor(lead/SIM_DT);
+      replayGuestTo(target)
+    }
+    function updateGuest(dt,now){
+      if(!state.running||!guestAnchor)return;
+      const age=(now-guestAnchor.received)/1000;
+      // Stop extrapolating a lost connection; an unresponsive host cannot invent new safe travel.
+      const target=guestAnchor.tick+Math.floor(Math.min(.5,age+netRtt+.035)/SIM_DT);
+      replayGuestTo(target);state.time=guestTick*SIM_DT;
+      if(now-netPingAt>1000){netPingAt=now;netSend({t:'ping',at:now})}
+      updateParticles(dt)
+    }
+    function displayCycles(now=performance.now()){
+      if(state.mode!=='guest')return state.cycles;
+      return state.cycles.map(c=>{
+        if(c.id===state.localId||!c.alive)return c;
+        const d=DIRS[c.dir],age=clamp((now-(c.receivedAt||now))/1000+netRtt*.5,0,.15),distance=c.speed*age,front=rayHit(c,d,distance).distance,travel=Math.min(distance,front===Infinity?distance:front*.92);
+        return {...c,x:c.x+d.x*travel,z:c.z+d.z*travel}
+      })
+    }
     function thinkAI(c,dt){
       c.nextAI-=dt;if(c.turnCooldown>0)return;
       const humans=state.cycles.filter(x=>x.human&&x.alive),anchor=humans.length?humans.reduce((a,h)=>({x:a.x+h.x/humans.length,z:a.z+h.z/humans.length}),{x:0,z:0}):localCycle()||{x:0,z:0},target=humans.reduce((best,h)=>{const dist=Math.hypot(c.x-h.x,c.z-h.z);return!best||dist<best.dist?{rider:h,dist}:best},null),anchorDist=Math.hypot(c.x-anchor.x,c.z-anchor.z),front=rayDistance(c,DIRS[c.dir],90),urgent=front<Math.max(6,c.speed*.44),leash=anchorDist>84,tooClose=target&&target.dist<6.5;
       let intercept=false,wander=false;if(c.nextAI<=0){intercept=!!target&&target.dist>10&&target.dist<58&&Math.random()<.42;wander=!intercept&&Math.random()<.045;c.nextAI=(intercept?1.5:1.8)+Math.random()*(intercept?1.1:1.8)}if(!urgent&&!leash&&!tooClose&&!intercept&&!wander){c.brake=false;return}
       const td=target?DIRS[target.rider.dir]:DIRS[c.dir],lead=target?clamp(10+target.dist*.42,14,34):0,cutX=target?target.rider.x+td.x*lead:anchor.x,cutZ=target?target.rider.z+td.z*lead:anchor.z,options=[{side:'left',di:(c.dir+3)%4},{side:'right',di:(c.dir+1)%4}],score=o=>{const d=DIRS[o.di],clear=rayDistance(c,d,72),nx=c.x+d.x*24,nz=c.z+d.z*24,anchorAfter=Math.hypot(nx-anchor.x,nz-anchor.z),humanAfter=target?Math.hypot(nx-target.rider.x,nz-target.rider.z):99,cutAfter=Math.hypot(nx-cutX,nz-cutZ);let s=Math.min(clear,46)+Math.random()*1.4;if(urgent)s+=Math.min(clear,55)*1.8;if(leash)s-=anchorAfter*1.15;if(tooClose)s+=humanAfter*2.4;if(intercept)s-=cutAfter*1.25;return s},best=options.sort((a,b)=>score(b)-score(a))[0];queueTurn(c,best.side);c.nextAI=Math.max(c.nextAI,1.25+Math.random()*1.1);c.brake=urgent&&front<5.5&&Math.random()<.22}
-    function step(dt){if(!state.running)return;state.time+=dt;
-      for(const c of state.cycles){if(!c.alive){if(c.respawnAt&&state.time>=c.respawnAt)respawnCycle(c);continue}if(c.ai&&(state.mode==='solo'||state.mode==='host'))thinkAI(c,dt);c.invuln=Math.max(0,c.invuln-dt);if(c.invuln>0){c.trailX=c.x;c.trailZ=c.z;c.trailEntryDir=null}c.turnCooldown=Math.max(0,c.turnCooldown-dt);if(c.turnQueue.length&&c.turnCooldown<=0){const turn=c.turnQueue.shift();if(turn&&typeof turn==='object'&&turn.remote)applyRemoteTurn(c,turn);else applyTurn(c,turn)}c.grind=c.invuln>0?0:sideGrind(c);const accel=c.grind*28;if(accel>0)c.speed=Math.min(cfg.maxSpeed,c.speed+accel*dt);else c.speed+=((c.speed>cfg.baseSpeed?cfg.baseSpeed:c.speed<cfg.baseSpeed?cfg.baseSpeed:c.speed)-c.speed)*.68*dt;
-        if(c.brake&&c.brakeEnergy>0){c.speed=Math.max(cfg.minSpeed,c.speed-23*dt);c.brakeEnergy=Math.max(0,c.brakeEnergy-.38*dt)}else c.brakeEnergy=Math.min(1,c.brakeEnergy+.13*dt);
-        let move=c.speed*dt,hit=c.invuln>0?{distance:Infinity,owner:null,wallId:null}:rayHit(c,DIRS[c.dir],Math.max(3.4,move+.5)),front=hit.distance;if(front<=move){const contact=hit.wallId??('owner:'+hit.owner);if(c.rubberWall!==contact){c.rubberWall=contact;c.rubber=0}if(c.rubber<1){const room=Math.max(0,front);move=Math.min(move,room*.92);c.rubber=Math.min(1,c.rubber+dt*(1.4+c.speed/cfg.baseSpeed*1.08));addSparks(c,2);if(room<.002&&c.rubber>=.995){crash(c,hit.owner);continue}}else{crash(c,hit.owner);continue}}else{c.rubber=Math.max(0,c.rubber-1.15*dt);if(c.rubber<=.001)c.rubberWall=null}
-        const d=DIRS[c.dir];c.x+=d.x*move;c.z+=d.z*move;if(c.ignoreWall&&Math.hypot(c.x-c.junctionX,c.z-c.junctionZ)>=.12)c.ignoreWall=0;if(c.grind>.34&&Math.random()<c.grind*.22)addSparks(c,1)}
-      state.walls=state.walls.filter(w=>w.expire==null||state.time<w.expire);updateParticles(dt);if(isHost&&state.mode==='host'){state.sendClock+=dt;if(state.sendClock>.05){state.sendClock=0;sendSnapshot()}}}
+    function step(dt){
+      if(!state.running)return;state.tick++;state.time=state.tick*SIM_DT;
+      for(const c of state.cycles){
+        if(!c.alive){if(c.respawnAt&&state.time>=c.respawnAt)respawnCycle(c);continue}
+        if(c.ai&&(state.mode==='solo'||state.mode==='host'))thinkAI(c,dt);
+        const command=c.turnQueue[0];
+        if(command&&typeof command==='object'){
+          while(c.turnQueue.length&&c.turnQueue[0].tick<=state.tick){const m=c.turnQueue.shift();if(m.seq>c.inputAck&&m.life===c.life)applyControl(c,m)}
+        }else if(c.turnQueue.length&&c.turnCooldown<=dt)applyTurn(c,c.turnQueue.shift());
+        advanceCycle(c,dt)
+      }
+      updateParticles(dt);
+      if(isHost&&state.mode==='host'){
+        if(state.needsSnapshot||state.tick%3===0){state.needsSnapshot=false;sendSnapshot()}
+      }
+    }
     function spawnExplosion(x,z,color,withAudio=false){for(let i=0;i<70;i++)state.particles.push({x,z,y:.7,vx:(Math.random()-.5)*18,vy:Math.random()*13,vz:(Math.random()-.5)*18,life:.45+Math.random()*.85,color:hex(color,.9),size:4+Math.random()*7});if(withAudio){audio.noise(.55,.22);audio.tone(54,.55,'sawtooth',.12)}}
-    function crash(c,trailOwner=null){if(!c.alive)return;const scorer=state.cycles.find(o=>o.id===trailOwner);if(c.human&&scorer&&scorer.id!==c.id)state.scores[scorer.id]=(state.scores[scorer.id]||0)+1;finalizedWall(c);c.alive=false;c.deathAt=state.time;c.respawnAt=state.time+4.35;c.deaths=(c.deaths||0)+1;c.speed=0;state.shake=.85;spawnExplosion(c.x,c.z,c.color,true);if(c.id===state.localId)state.deathCam={x:c.x,z:c.z,at:state.time};for(const other of state.cycles)if(other.alive){finalizedWall(other);other.trailX=other.x;other.trailZ=other.z;other.trailEntryDir=null}carveGap(c.x,c.z,cfg.blastRadius);if(state.mode==='host'&&state.clearTrailsOnCrash)state.walls=state.walls.filter(w=>w.owner!==c.id);state.leaderSig='';if(isHost&&state.mode==='host'){sendWalls();netSend({t:'crash',id:c.id,x:c.x,z:c.z,color:c.color,respawnAt:c.respawnAt})}}
-    function carveGap(x,z,r){const out=[];for(const w of state.walls){const horizontal=Math.abs(w.z1-w.z2)<.01;if(horizontal){const dz=Math.abs(w.z1-z);if(dz>=r){out.push(w);continue}const cut=Math.sqrt(r*r-dz*dz),a=Math.min(w.x1,w.x2),b=Math.max(w.x1,w.x2),lo=x-cut,hi=x+cut;if(lo>a+.55)out.push({...w,id:state.nextWall++,x1:a,x2:Math.min(lo,b)});if(hi<b-.55)out.push({...w,id:state.nextWall++,x1:Math.max(hi,a),x2:b})}else{const dx=Math.abs(w.x1-x);if(dx>=r){out.push(w);continue}const cut=Math.sqrt(r*r-dx*dx),a=Math.min(w.z1,w.z2),b=Math.max(w.z1,w.z2),lo=z-cut,hi=z+cut;if(lo>a+.55)out.push({...w,id:state.nextWall++,z1:a,z2:Math.min(lo,b)});if(hi<b-.55)out.push({...w,id:state.nextWall++,z1:Math.max(hi,a),z2:b})}}state.walls=out}
+    function crash(c,trailOwner=null){
+      if(!c.alive)return;const scorer=state.cycles.find(o=>o.id===trailOwner);
+      if(c.human&&scorer&&scorer.id!==c.id)state.scores[scorer.id]=(state.scores[scorer.id]||0)+1;
+      finalizedWall(c);c.alive=false;c.deathAt=state.time;c.respawnAt=state.time+4.35;c.deaths++;c.speed=0;c.turnQueue=[];
+      state.shake=.85;spawnExplosion(c.x,c.z,c.color,true);
+      if(c.id===state.localId)state.deathCam={x:c.x,z:c.z,at:state.time};
+      for(const other of state.cycles)if(other.alive){
+        const w=finalizedWall(other);if(w)other.ignoreWall=w.id;
+        other.junctionX=other.trailX=other.x;other.junctionZ=other.trailZ=other.z
+      }
+      carveGap(c.x,c.z,cfg.blastRadius);
+      if(state.mode==='host'&&state.clearTrailsOnCrash)state.walls=state.walls.filter(w=>w.owner!==c.id);
+      state.wallRevision++;state.leaderSig='';
+      if(isHost&&state.mode==='host'){sendWalls();netSend({t:'crash',round:state.round,life:c.life,id:c.id,x:c.x,z:c.z,color:c.color,respawnAt:c.respawnAt})}
+    }
+
+    function carveGap(x,z,r){
+      const out=[];
+      for(const w of state.walls){
+        const horizontal=w.z1===w.z2,axis=horizontal?'x':'z',side=horizontal?Math.abs(w.z1-z):Math.abs(w.x1-x),a=w[axis+'1'],b=w[axis+'2'],center=horizontal?x:z;
+        if(side>=r||a===b){out.push(w);continue}
+        const cut=Math.sqrt(r*r-side*side),lo=center-cut,hi=center+cut,min=Math.min(a,b),max=Math.max(a,b);
+        if(hi<=min||lo>=max){out.push(w);continue}
+        const sign=Math.sign(b-a),length=Math.abs(b-a),u=clamp(((sign>0?lo:hi)-a)*sign,0,length),v=clamp(((sign>0?hi:lo)-a)*sign,0,length);
+        // Keep the identity of the piece touching the rider's original endpoint.
+        if(u>0)out.push({...w,id:v<length?state.nextWall++:w.id,[axis+'2']:a+sign*u});
+        if(v<length)out.push({...w,[axis+'1']:a+sign*v})
+      }
+      state.walls=out
+    }
+
     function addSparks(c,n){const d=DIRS[c.dir];for(let i=0;i<n;i++)state.particles.push({x:c.x-d.x*(.5+Math.random()),z:c.z-d.z*(.5+Math.random()),y:.15+Math.random()*.65,vx:(Math.random()-.5)*4,vy:2+Math.random()*5,vz:(Math.random()-.5)*4,life:.18+Math.random()*.28,color:hex(c.color,.9),size:2+Math.random()*3})}
     function updateParticles(dt){for(const p of state.particles){p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.z+=p.vz*dt;p.vy-=13*dt;p.vx*=.98;p.vz*=.98}state.particles=state.particles.filter(p=>p.life>0)}
     function endRoundSoon(){state.roundEnding=true;setTimeout(()=>{if(!state.roundEnding)return;const alive=state.cycles.find(c=>c.alive);state.running=false;showResult(alive);if(isHost&&state.mode==='host')sendSnapshot()},1050)}
@@ -253,23 +419,38 @@
         const cx=bx-5,cz=bz+sgn*b-4,sx=8+((h>>>21)%5),sz=6+((h>>>24)%5);line([cx,.025,cz],[cx+sx,.025,cz],padCol);line([cx+sx,.025,cz],[cx+sx,.025,cz+sz],padCol);line([cx+sx,.025,cz+sz],[cx,.025,cz+sz],padCol);line([cx,.025,cz+sz],[cx,.025,cz],padCol)
       }
     }
-    function render(dt){resize();trisP=[];trisC=[];linesP=[];linesC=[];ptsP=[];ptsC=[];const local=localCycle(),deathView=local&&!local.alive&&state.deathCam;let focus=local||state.cycles.find(c=>c.alive);if(!focus)focus=state.cycles.find(c=>c.alive);if(state.mode==='guest')for(const c of state.cycles){c.dir=c.tdir;const predicting=c.id===state.localId&&c.alive&&guestPendingTurns.length&&performance.now()-guestPendingTurns[0].at<340;if(predicting){const d=DIRS[c.dir];c.x+=d.x*c.speed*dt;c.z+=d.z*c.speed*dt}else{c.x=lerp(c.x,c.tx,1-Math.pow(.008,dt));c.z=lerp(c.z,c.tz,1-Math.pow(.008,dt))}}
-      if(deathView){const t=(state.time-state.deathCam.at)*.31,r=15;const ex=state.deathCam.x+Math.cos(t)*r,ez=state.deathCam.z+Math.sin(t)*r,k=1-Math.pow(.0012,dt);cam.x=lerp(cam.x,ex,k);cam.y=lerp(cam.y,8.8,k);cam.z=lerp(cam.z,ez,k);cam.tx=lerp(cam.tx,state.deathCam.x,k);cam.ty=lerp(cam.ty,.8,k);cam.tz=lerp(cam.tz,state.deathCam.z,k)}else if(focus){const d=DIRS[focus.dir],m=state.camMode,back=m===1?25:m===2?10:35+focus.speed*.15,rise=m===1?14:m===2?70:19+focus.speed*.095,ahead=m===2?0:9;const ex=focus.x-d.x*back,ez=focus.z-d.z*back,ey=rise,tgtx=focus.x+d.x*ahead,tgtz=focus.z+d.z*ahead,k=1-Math.pow(.0007,dt);cam.x=lerp(cam.x,ex,k);cam.y=lerp(cam.y,ey,k);cam.z=lerp(cam.z,ez,k);cam.tx=lerp(cam.tx,tgtx,k);cam.ty=lerp(cam.ty,1,k);cam.tz=lerp(cam.tz,tgtz,k)}else{const t=performance.now()*.00008;cam.x=Math.cos(t)*28;cam.z=Math.sin(t)*28;cam.y=12;cam.tx=cam.tz=0;cam.ty=0}
+    function visibleWall(w){return !(state.mode==='guest'&&w.owner===state.localId&&w.life===localCycle()?.life&&w.inputSeq>guestAck)}
+    function render(dt){resize();trisP=[];trisC=[];linesP=[];linesC=[];ptsP=[];ptsC=[];const riders=displayCycles(),local=localCycle(),deathView=local&&!local.alive&&state.deathCam;let focus=local||riders.find(c=>c.alive);if(!focus)focus=riders.find(c=>c.alive);
+
+    if(deathView){const t=(state.time-state.deathCam.at)*.31,r=15;const ex=state.deathCam.x+Math.cos(t)*r,ez=state.deathCam.z+Math.sin(t)*r,k=1-Math.pow(.0012,dt);cam.x=lerp(cam.x,ex,k);cam.y=lerp(cam.y,8.8,k);cam.z=lerp(cam.z,ez,k);cam.tx=lerp(cam.tx,state.deathCam.x,k);cam.ty=lerp(cam.ty,.8,k);cam.tz=lerp(cam.tz,state.deathCam.z,k)}else if(focus){const d=DIRS[focus.dir],m=state.camMode,back=m===1?25:m===2?10:35+focus.speed*.15,rise=m===1?14:m===2?70:19+focus.speed*.095,ahead=m===2?0:9;const ex=focus.x-d.x*back,ez=focus.z-d.z*back,ey=rise,tgtx=focus.x+d.x*ahead,tgtz=focus.z+d.z*ahead,k=1-Math.pow(.0007,dt);cam.x=lerp(cam.x,ex,k);cam.y=lerp(cam.y,ey,k);cam.z=lerp(cam.z,ez,k);cam.tx=lerp(cam.tx,tgtx,k);cam.ty=lerp(cam.ty,1,k);cam.tz=lerp(cam.tz,tgtz,k)}else{const t=performance.now()*.00008;cam.x=Math.cos(t)*28;cam.z=Math.sin(t)*28;cam.y=12;cam.tx=cam.tz=0;cam.ty=0}
       state.shake=Math.max(0,state.shake-dt*2.4);const sx=(Math.random()-.5)*state.shake,sz=(Math.random()-.5)*state.shake;const fx=deathView?state.deathCam.x:focus?focus.x:0,fz=deathView?state.deathCam.z:focus?focus.z:0,size=260,minX=Math.floor((fx-170)/10)*10,maxX=Math.ceil((fx+170)/10)*10,minZ=Math.floor((fz-170)/10)*10,maxZ=Math.ceil((fz+170)/10)*10;quad([fx-size,0,fz-size],[fx+size,0,fz-size],[fx+size,0,fz+size],[fx-size,0,fz+size],[.009,.015,.021,1]);for(let x=minX;x<=maxX;x+=10){const major=Math.abs(x%50)<.01,col=major?[.13,.68,.76,.62]:[.07,.42,.5,.36];line([x,.012,minZ],[x,.012,maxZ],col)}for(let z=minZ;z<=maxZ;z+=10){const major=Math.abs(z%50)<.01,col=major?[.13,.68,.76,.62]:[.07,.42,.5,.36];line([minX,.012,z],[maxX,.012,z],col)}boardGeom(fx,fz);
-      for(const w of state.walls)wallGeom(w,{x:fx,z:fz});for(const w of predictedWalls)wallGeom(w,{x:fx,z:fz});for(const c of state.cycles)if(c.alive)wallGeom(activeSegment(c),{x:fx,z:fz});for(const c of state.cycles)bike(c);for(const p of state.particles)V(ptsP,ptsC,[p.x,p.y,p.z],[p.color[0],p.color[1],p.color[2],clamp(p.life*2,0,1)]);
+      for(const w of state.walls)if(visibleWall(w))wallGeom(w,{x:fx,z:fz});for(const w of predictedWalls)wallGeom(w,{x:fx,z:fz});for(const c of riders)if(c.alive)wallGeom(activeSegment(c),{x:fx,z:fz});for(const c of riders)bike(c);for(const p of state.particles)V(ptsP,ptsC,[p.x,p.y,p.z],[p.color[0],p.color[1],p.color[2],clamp(p.life*2,0,1)]);
       gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.008,.012,.018,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.useProgram(program);const proj=matPerspective(Math.PI/3.2,canvas.width/canvas.height,.08,360),view=matLook([cam.x+sx,cam.y,cam.z+sz],[cam.tx,cam.ty,cam.tz]),vp=matMul(proj,view);gl.uniformMatrix4fv(loc.vp,false,vp);gl.uniform3f(loc.cam,cam.x,cam.y,cam.z);drawBatch(gl.TRIANGLES,trisP,trisC);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);gl.lineWidth(1);drawBatch(gl.LINES,linesP,linesC);drawBatch(gl.POINTS,ptsP,ptsC,7*(devicePixelRatio||1));gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA)}
     function resize(){const d=Math.min(2,devicePixelRatio||1),w=Math.floor(innerWidth*d),h=Math.floor(innerHeight*d);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}}
-    function loop(now){const raw=Math.min(.1,(now-state.last)/1000);state.last=now;if(state.mode==='guest')updateParticles(raw);state.accum+=raw;if(state.mode!=='guest')while(state.accum>=1/60){step(1/60);state.accum-=1/60}else state.accum=0;const local=localCycle();audio.update(local);updateHUD();render(raw);requestAnimationFrame(loop)}requestAnimationFrame(loop);
+    function loop(now){const raw=Math.min(.1,(now-state.last)/1000);state.last=now;if(state.mode==='guest'){updateGuest(raw,now);state.accum=0}else{state.accum+=raw;while(state.accum>=SIM_DT){step(SIM_DT);state.accum-=SIM_DT}}const local=localCycle();audio.update(local);updateHUD();render(raw);requestAnimationFrame(loop)}requestAnimationFrame(loop);
+
 
     function drawMiniBike(canvas,color,alive){const ctx=canvas.getContext('2d'),w=canvas.width=80,h=canvas.height=36;ctx.clearRect(0,0,w,h);ctx.globalAlpha=alive?1:.42;ctx.strokeStyle=color;ctx.fillStyle=color;ctx.shadowColor=color;ctx.shadowBlur=8;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(3,27);ctx.lineTo(33,27);ctx.stroke();for(const x of [38,65]){ctx.beginPath();ctx.arc(x,25,7,0,Math.PI*2);ctx.stroke()}ctx.beginPath();ctx.moveTo(31,24);ctx.lineTo(43,12);ctx.lineTo(61,13);ctx.lineTo(69,23);ctx.lineTo(45,22);ctx.closePath();ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#061017';ctx.fillRect(46,13,11,4)}
-    function renderMinimap(focus){const now=performance.now();if(now<minimapAt)return;minimapAt=now+90;const cv=$('#minimap'),rect=cv.getBoundingClientRect(),d=Math.min(2,devicePixelRatio||1),w=Math.max(1,Math.round(rect.width)),h=Math.max(1,Math.round(rect.height)),pw=Math.round(w*d),ph=Math.round(h*d);if(cv.width!==pw||cv.height!==ph){cv.width=pw;cv.height=ph}const ctx=cv.getContext('2d');ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);ctx.fillStyle='rgba(2,7,10,.92)';ctx.fillRect(0,0,w,h);const range=115,scale=Math.min(w,h)/(range*2),px=x=>w*.5+(x-focus.x)*scale,py=z=>h*.5+(z-focus.z)*scale;ctx.lineWidth=1;for(let x=Math.ceil((focus.x-range)/10)*10;x<=focus.x+range;x+=10){ctx.strokeStyle=Math.abs(x%50)<.01?'rgba(49,236,255,.22)':'rgba(49,236,255,.08)';ctx.beginPath();ctx.moveTo(px(x),0);ctx.lineTo(px(x),h);ctx.stroke()}for(let z=Math.ceil((focus.z-range)/10)*10;z<=focus.z+range;z+=10){ctx.strokeStyle=Math.abs(z%50)<.01?'rgba(49,236,255,.22)':'rgba(49,236,255,.08)';ctx.beginPath();ctx.moveTo(0,py(z));ctx.lineTo(w,py(z));ctx.stroke()}const trails=[...state.walls,...predictedWalls,...state.cycles.filter(c=>c.alive).map(activeSegment)];ctx.lineCap='butt';for(const wall of trails){if(Math.max(wall.x1,wall.x2)<focus.x-range||Math.min(wall.x1,wall.x2)>focus.x+range||Math.max(wall.z1,wall.z2)<focus.z-range||Math.min(wall.z1,wall.z2)>focus.z+range)continue;ctx.strokeStyle=wall.color;ctx.globalAlpha=wall.active ? .78 : .58;ctx.lineWidth=wall.owner===state.localId?1.35:1;ctx.beginPath();ctx.moveTo(px(wall.x1),py(wall.z1));ctx.lineTo(px(wall.x2),py(wall.z2));ctx.stroke()}ctx.globalAlpha=1;for(const c of state.cycles){if(!c.alive||Math.abs(c.x-focus.x)>range||Math.abs(c.z-focus.z)>range)continue;const x=px(c.x),y=py(c.z),a=c.dir*Math.PI/2;ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.fillStyle=c.color;ctx.shadowColor=c.color;ctx.shadowBlur=c.id===state.localId?8:5;ctx.beginPath();ctx.moveTo(0,-5);ctx.lineTo(3.7,4);ctx.lineTo(0,2.4);ctx.lineTo(-3.7,4);ctx.closePath();ctx.fill();if(c.id===state.localId){ctx.shadowBlur=0;ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke()}ctx.restore()}ctx.shadowBlur=0;ctx.fillStyle='rgba(192,244,250,.72)';ctx.font='700 7px ui-monospace,monospace';ctx.fillText('230 U',7,h-7);ctx.fillStyle='#31ecff';ctx.textAlign='right';ctx.fillText('N',w-7,11);ctx.textAlign='left'}
+    function renderMinimap(focus){const now=performance.now();if(now<minimapAt)return;minimapAt=now+90;const cv=$('#minimap'),rect=cv.getBoundingClientRect(),d=Math.min(2,devicePixelRatio||1),w=Math.max(1,Math.round(rect.width)),h=Math.max(1,Math.round(rect.height)),pw=Math.round(w*d),ph=Math.round(h*d);if(cv.width!==pw||cv.height!==ph){cv.width=pw;cv.height=ph}const ctx=cv.getContext('2d');ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);ctx.fillStyle='rgba(2,7,10,.92)';ctx.fillRect(0,0,w,h);const range=115,scale=Math.min(w,h)/(range*2),px=x=>w*.5+(x-focus.x)*scale,py=z=>h*.5+(z-focus.z)*scale;ctx.lineWidth=1;for(let x=Math.ceil((focus.x-range)/10)*10;x<=focus.x+range;x+=10){ctx.strokeStyle=Math.abs(x%50)<.01?'rgba(49,236,255,.22)':'rgba(49,236,255,.08)';ctx.beginPath();ctx.moveTo(px(x),0);ctx.lineTo(px(x),h);ctx.stroke()}for(let z=Math.ceil((focus.z-range)/10)*10;z<=focus.z+range;z+=10){ctx.strokeStyle=Math.abs(z%50)<.01?'rgba(49,236,255,.22)':'rgba(49,236,255,.08)';ctx.beginPath();ctx.moveTo(0,py(z));ctx.lineTo(w,py(z));ctx.stroke()}const riders=displayCycles(now),trails=[...state.walls.filter(visibleWall),...predictedWalls,...riders.filter(c=>c.alive).map(activeSegment)];ctx.lineCap='butt';for(const wall of trails){if(Math.max(wall.x1,wall.x2)<focus.x-range||Math.min(wall.x1,wall.x2)>focus.x+range||Math.max(wall.z1,wall.z2)<focus.z-range||Math.min(wall.z1,wall.z2)>focus.z+range)continue;ctx.strokeStyle=wall.color;ctx.globalAlpha=wall.active ? .78 : .58;ctx.lineWidth=wall.owner===state.localId?1.35:1;ctx.beginPath();ctx.moveTo(px(wall.x1),py(wall.z1));ctx.lineTo(px(wall.x2),py(wall.z2));ctx.stroke()}ctx.globalAlpha=1;for(const c of riders){if(!c.alive||Math.abs(c.x-focus.x)>range||Math.abs(c.z-focus.z)>range)continue;const x=px(c.x),y=py(c.z),a=c.dir*Math.PI/2;ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.fillStyle=c.color;ctx.shadowColor=c.color;ctx.shadowBlur=c.id===state.localId?8:5;ctx.beginPath();ctx.moveTo(0,-5);ctx.lineTo(3.7,4);ctx.lineTo(0,2.4);ctx.lineTo(-3.7,4);ctx.closePath();ctx.fill();if(c.id===state.localId){ctx.shadowBlur=0;ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke()}ctx.restore()}ctx.shadowBlur=0;ctx.fillStyle='rgba(192,244,250,.72)';ctx.font='700 7px ui-monospace,monospace';ctx.fillText('230 U',7,h-7);ctx.fillStyle='#31ecff';ctx.textAlign='right';ctx.fillText('N',w-7,11);ctx.textAlign='left'}
     function renderLeaderboard(){const riders=[...state.cycles].sort((a,b)=>(b.alive-a.alive)||(b.human-a.human)||((state.scores[b.id]||0)-(state.scores[a.id]||0))||String(a.name).localeCompare(String(b.name))),root=$('#leaderRows');root.replaceChildren();for(const c of riders){const row=document.createElement('div');row.className='lb-row'+(c.id===state.localId?' you':'')+(c.alive?'':' dead');const cv=document.createElement('canvas');cv.className='lb-bike';cv.setAttribute('aria-hidden','true');const copy=document.createElement('div');copy.className='lb-copy';const name=document.createElement('div');name.className='lb-name';name.textContent=c.name||'RIDER';const sub=document.createElement('div');sub.className='lb-sub';sub.textContent=c.id===state.localId?'YOU · '+(c.alive?'RIDING':'CRASH'):c.ai?'AI · '+(c.alive?'ACTIVE':'REBOOT'):c.alive?'CONNECTED':'REBOOT';copy.append(name,sub);const score=document.createElement('div');score.className='lb-score';score.title='Human riders eliminated by this trail';score.textContent=String(state.scores[c.id]||0).padStart(2,'0');row.append(cv,copy,score);root.append(row);drawMiniBike(cv,c.color,c.alive)}}
     function updateLocalName(value){const name=cleanName(value);localStorage.setItem('grid-rider-name',name);$('#playerName').value=name;const c=localCycle();if(c)c.name=name;state.leaderSig='';if(state.mode==='guest')netSend({t:'name',name});else if(isHost&&state.mode==='host')sendInit();renderLeaderboard();return name}
     function updateHUD(){const c=localCycle();if(!c)return;renderMinimap(c);$('#speed').innerHTML=Math.round(c.speed*3.6)+' <small>km/h</small>';const be=clamp(c.brakeEnergy,0,1),rr=clamp(1-c.rubber,0,1);$('#brakeMeter').style.transform=`scaleX(${be})`;$('#rubberMeter').style.transform=`scaleX(${rr})`;$('#brakeText').textContent=Math.round(be*100)+'%';$('#rubberText').textContent=Math.round(rr*100)+'%';const bots=state.cycles.filter(x=>x.ai),humans=state.cycles.filter(x=>x.human);syncRosterButton();$('#modeLabel').textContent=state.mode==='solo'?'SOLO · '+bots.length+' AI':'P2P · '+humans.length+'/'+state.maxHumans+' HUMANS';$('#grindLabel').textContent=c.alive?(c.grind>.18?'WALL NEAR · '+Math.round(c.grind*100)+'%':c.brake?'BRAKE ACTIVE':'FIND A TRAIL'):'SIGNAL LOST';const sig=state.mode+'|'+state.localId+'|'+state.cycles.map(x=>[x.id,x.name,x.color,x.alive,state.scores[x.id]||0].join(':')).join('|');if(sig!==state.leaderSig&&performance.now()>state.leaderRenderAt){state.leaderSig=sig;state.leaderRenderAt=performance.now()+180;renderLeaderboard()}}
 
     // Host-authoritative simulation over automatic WebRTC rooms.
     const rtcConfig={iceServers:[{urls:'stun:stun.cloudflare.com:3478'}]};
-    function netSend(obj,target=null){if(!autoAction)return;const peer=typeof target==='string'?target:target?.peerId||(!isHost?autoHostPeer:'');autoAction.send(obj,peer?{target:peer}:undefined).catch(()=>{})}
+    const snapshotOutbox=new Map();
+    function netSend(obj,target=null){
+      const action=autoAction;if(!action)return;
+      const peer=typeof target==='string'?target:target?.peerId||(!isHost?autoHostPeer:'');
+      if(obj.t==='snap'&&isHost){
+        for(const p of peer?[{peerId:peer}]:hostPeers.values()){
+          let slot=snapshotOutbox.get(p.peerId);if(!slot){slot={busy:false,next:null};snapshotOutbox.set(p.peerId,slot)}
+          slot.next=obj;if(slot.busy)continue;slot.busy=true;
+          (async()=>{try{while(slot.next&&autoAction===action){const latest=slot.next;slot.next=null;await action.send(latest,{target:p.peerId})}}catch{}finally{slot.busy=false}})()
+        }
+      }else action.send(obj,peer?{target:peer}:undefined).catch(()=>{})
+    }
+
     function randomRoomPart(n=5){const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';return Array.from({length:n},()=>chars[Math.random()*chars.length|0]).join('')}
     function cleanRoom(value){return String(value||'').toUpperCase().replace(/[^A-Z0-9-]/g,'').replace(/-+/g,'-').slice(0,24)}
     function inviteBase(){return location.origin==='null'?location.href.split('#')[0]:location.origin+location.pathname}
@@ -286,43 +467,94 @@
     function closePublicDirectory(){clearInterval(directoryTimer);clearTimeout(publicMatchTimer);clearPublicProbes();directoryTimer=publicMatchTimer=0;publicMatchPending=false;publicCandidates.clear();if(directoryRoom)try{directoryRoom.leave()}catch{}directoryRoom=directoryAction=null}
     function finishPublicMatch(){if(!publicMatchPending)return;publicMatchPending=false;clearTimeout(publicMatchTimer);clearPublicProbes();publicMatchTimer=0;const best=[...publicCandidates.values()].filter(x=>x.open>0).sort((a,b)=>b.humans-a.humans||a.open-b.open||a.room.localeCompare(b.room))[0];publicCandidates.clear();if(best){setPublicInvite(best.room);setConn(`Joining the busiest room · ${best.humans}/${best.max} humans…`);closePublicDirectory();publicJoinMode='match';joinAutoRoom(best.room,true)}else{const code=setPublicInvite('PUB-'+randomRoomPart(6));setConn('No open room · creating one…');joinAutoRoom(code,true)}}
     function handleDirectoryMessage(m,peerId){if(!m||typeof m!=='object')return;if(m.t==='find'){if(autoIsPublic&&isHost&&publicSlots()>0)advertisePublicRoom(peerId);return}if(m.t==='ad'&&publicMatchPending&&+m.open>0){const room=cleanRoom(m.room);if(!room)return;const max=clamp(Math.floor(+m.max||2),2,6),humans=clamp(Math.floor(+(m.humans??m.players)||1),1,max),open=clamp(Math.floor(+m.open||0),0,max-humans);if(open>0)publicCandidates.set(room,{room,humans,max,open})}}
-    async function ensurePublicDirectory(){if(directoryRoom)return;const mod=await import('https://esm.run/trystero@0.25.3'),config={appId:'grid-infinito-lightcycles-v4',rtcConfig};directoryRoom=mod.joinRoom(config,'GRID-INFINITY-PUBLIC-DIRECTORY-V1',{onJoinError:()=>setConn('Public directory unavailable · creating a room')});directoryAction=directoryRoom.makeAction('rooms-v1');directoryAction.onMessage=(data,{peerId})=>handleDirectoryMessage(data,peerId);directoryRoom.onPeerJoin=peerId=>{if(publicMatchPending)sendDirectory({t:'find'},peerId);if(autoIsPublic&&isHost&&publicSlots()>0)advertisePublicRoom(peerId)}}
+    async function ensurePublicDirectory(){if(directoryRoom)return;const mod=await import('https://esm.run/trystero@0.25.3'),config={appId:'grid-infinito-lightcycles-v5',rtcConfig};directoryRoom=mod.joinRoom(config,'GRID-INFINITY-PUBLIC-DIRECTORY-V2',{onJoinError:()=>setConn('Public directory unavailable · creating a room')});directoryAction=directoryRoom.makeAction('rooms-v1');directoryAction.onMessage=(data,{peerId})=>handleDirectoryMessage(data,peerId);directoryRoom.onPeerJoin=peerId=>{if(publicMatchPending)sendDirectory({t:'find'},peerId);if(autoIsPublic&&isHost&&publicSlots()>0)advertisePublicRoom(peerId)}}
     async function startPublicAdvertising(){try{await ensurePublicDirectory();advertisePublicRoom();clearInterval(directoryTimer);directoryTimer=setInterval(()=>advertisePublicRoom(),1150)}catch{setConn('Room active · public directory unavailable')}}
     async function matchPublicRoom(){setOnlineLoading(true);publicJoinMode='match';clearTimeout(publicMatchTimer);clearPublicProbes();publicCandidates.clear();publicMatchPending=true;setConn('Looking for the busiest open room…');try{await ensurePublicDirectory();if(!publicMatchPending)return;const probe=()=>{if(publicMatchPending)sendDirectory({t:'find'})};probe();for(const delay of [550,1300,2200])publicProbeTimers.push(setTimeout(probe,delay));publicMatchTimer=setTimeout(finishPublicMatch,3200)}catch{publicMatchPending=false;clearPublicProbes();publicCandidates.clear();const code=setPublicInvite('PUB-'+randomRoomPart(6));joinAutoRoom(code,true)}}
     function autoPeerByNetwork(peerId){return[...hostPeers.values()].find(p=>p.peerId===peerId)}
-    function becomeAutoGuest(host){clearTimeout(autoConnectTimer);if(host===autoSelf)return;autoHostPeer=host;isHost=false;state.mode='guest';state.running=false;resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;closePublicDirectory();setConn('Host found · syncing grid…');netSend({t:'hello',name:cleanName($('#playerName').value)})}
+    function becomeAutoGuest(host){clearTimeout(autoConnectTimer);if(host===autoSelf||(host===autoHostPeer&&state.mode==='guest'&&state.running))return;autoHostPeer=host;isHost=false;state.mode='guest';state.running=false;resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;closePublicDirectory();setConn('Host found · syncing grid…');netSend({t:'hello',name:cleanName($('#playerName').value)})}
     function becomeAutoHost(){if(autoHostPeer&&autoHostPeer!==autoSelf)return;clearTimeout(autoConnectTimer);autoHostPeer=autoSelf;isHost=true;hostPeers.clear();beginHostRoom();setOnlineLoading(false);state.roomId=autoRoomId;closeNetwork();setConn('Room active · you are the host');netSend({t:'host',host:autoSelf});if(autoIsPublic)startPublicAdvertising();showToast('Room active · invite link ready')}
-    function removeAutoPeer(peerId){const p=autoPeerByNetwork(peerId);if(!p)return;hostPeers.delete(p.id);state.walls=state.walls.filter(w=>w.owner!==p.id);state.cycles=state.cycles.filter(c=>c.id!==p.id);state.leaderSig='';announcePresence('leave',p);sendInit();advertisePublicRoom()}
+    function removeAutoPeer(peerId){snapshotOutbox.delete(peerId);const p=autoPeerByNetwork(peerId);if(!p)return;hostPeers.delete(p.id);state.walls=state.walls.filter(w=>w.owner!==p.id);state.wallRevision++;state.cycles=state.cycles.filter(c=>c.id!==p.id);state.leaderSig='';announcePresence('leave',p);sendInit();advertisePublicRoom()}
     function handleAutoMessage(m,peerId){if(!m||typeof m!=='object')return;if(m.t==='host'){if(isHost){if(String(m.host)<String(autoSelf))becomeAutoGuest(m.host);else netSend({t:'host',host:autoSelf},peerId)}else becomeAutoGuest(m.host);return}if(m.t==='full'&&!isHost){showToast('This room is full');if(autoRoom)try{autoRoom.leave()}catch{}autoRoom=autoAction=null;autoHostPeer='';if(autoIsPublic&&publicJoinMode==='match'){setConn('Room filled up · looking for another…');setTimeout(matchPublicRoom,350)}else{setOnlineLoading(false);setConn('Room full')}return}if(isHost){let peer=autoPeerByNetwork(peerId);if(m.t==='hello'&&!peer){const id=freeHumanId();if(id==null){netSend({t:'full'},peerId);return}peer={id,peerId,name:cleanName(m.name||('RIDER '+id)),auto:true};hostPeers.set(id,peer);const p=safeBotSpawn(id+3);state.cycles.push(makeCycle(id,peer.name,COLORS[id%COLORS.length],p.x,p.z,p.dir,true,false));state.leaderSig='';announcePresence('join',peer);sendInit(peer);advertisePublicRoom();return}if(peer)handleNet(m,peer)}else{if(!autoHostPeer&&m.t==='init')autoHostPeer=peerId;if(peerId===autoHostPeer){handleNet(m,null);if(m.t==='init')closeNetwork()}}}
-    async function joinAutoRoom(roomId,isPublic=false){setOnlineLoading(true);resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;try{if(autoRoom)try{autoRoom.leave()}catch{}clearTimeout(autoConnectTimer);hostPeers.clear();autoHostPeer='';isHost=false;autoIsPublic=!!isPublic;autoRoomId=cleanRoom(roomId)||(isPublic?'PUB-'+randomRoomPart(6):'PRI-'+randomRoomPart(10));state.roomId=autoRoomId;if(isPublic)setPublicInvite(autoRoomId);else closePublicDirectory();setConn('Looking for other riders…');const mod=await import('https://esm.run/trystero@0.25.3'),config={appId:'grid-infinito-lightcycles-v4',rtcConfig};autoSelf=mod.selfId;autoRoom=mod.joinRoom(config,autoRoomId,{onJoinError:()=>setConn('Direct connection failed on this network')});autoAction=autoRoom.makeAction('grid-v4');autoAction.onMessage=(data,{peerId})=>handleAutoMessage(data,peerId);autoRoom.onPeerJoin=peerId=>{if(isHost)netSend({t:'host',host:autoSelf},peerId);else netSend({t:'hello',name:cleanName($('#playerName').value)},peerId)};autoRoom.onPeerLeave=peerId=>{if(isHost)removeAutoPeer(peerId);else if(peerId===autoHostPeer){autoHostPeer='';state.running=false;resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;setConn('Host left · re-electing…');autoConnectTimer=setTimeout(()=>{const ids=[autoSelf,...Object.keys(autoRoom?.getPeers?.()||{})].sort();if(ids[0]===autoSelf)becomeAutoHost()},1300)}};autoConnectTimer=setTimeout(()=>{if(!autoHostPeer)becomeAutoHost()},1900);netSend({t:'probe',name:cleanName($('#playerName').value)})}catch(e){setOnlineLoading(false);setConn('Matchmaking unavailable: '+e.message)}}
+    async function joinAutoRoom(roomId,isPublic=false){snapshotOutbox.clear();setOnlineLoading(true);state.running=false;state.mode='connecting';resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;try{if(autoRoom)try{autoRoom.leave()}catch{}clearTimeout(autoConnectTimer);hostPeers.clear();autoHostPeer='';isHost=false;autoIsPublic=!!isPublic;autoRoomId=cleanRoom(roomId)||(isPublic?'PUB-'+randomRoomPart(6):'PRI-'+randomRoomPart(10));state.roomId=autoRoomId;if(isPublic)setPublicInvite(autoRoomId);else closePublicDirectory();setConn('Looking for other riders…');const mod=await import('https://esm.run/trystero@0.25.3'),config={appId:'grid-infinito-lightcycles-v5',rtcConfig};autoSelf=mod.selfId;autoRoom=mod.joinRoom(config,autoRoomId,{onJoinError:()=>setConn('Direct connection failed on this network')});autoAction=autoRoom.makeAction('grid-v5');autoAction.onMessage=(data,{peerId})=>handleAutoMessage(data,peerId);autoRoom.onPeerJoin=peerId=>{if(isHost)netSend({t:'host',host:autoSelf},peerId);else netSend({t:'hello',name:cleanName($('#playerName').value)},peerId)};autoRoom.onPeerLeave=peerId=>{if(isHost)removeAutoPeer(peerId);else if(peerId===autoHostPeer){autoHostPeer='';state.running=false;resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;setConn('Host left · re-electing…');autoConnectTimer=setTimeout(()=>{const ids=[autoSelf,...Object.keys(autoRoom?.getPeers?.()||{})].sort();if(ids[0]===autoSelf)becomeAutoHost()},1300)}};autoConnectTimer=setTimeout(()=>{if(!autoHostPeer)becomeAutoHost()},1900);netSend({t:'probe',name:cleanName($('#playerName').value)})}catch(e){setOnlineLoading(false);setConn('Matchmaking unavailable: '+e.message)}}
     function setConn(s){$('#connState').textContent=s}
     function setOnlineLoading(loading){for(const id of ['#onlineBtn','#startOnlineSettings']){const b=$(id);if(!b)continue;b.classList.toggle('loading',!!loading);b.disabled=!!loading;b.setAttribute('aria-busy',String(!!loading))}}
     function freeHumanId(){for(let id=1;id<state.maxHumans;id++)if(!hostPeers.has(id))return id;return null}
-    function initPayload(you){return{t:'init',you,cycles:state.cycles.map(packCycle),walls:state.walls.map(packWall),scores:state.scores,chat:state.chat.map(({id,text,name,color,at})=>({id,text,name,color,at})),round:state.round,aiCount:state.aiCount,maxHumans:state.maxHumans,clearTrailsOnCrash:state.clearTrailsOnCrash}}
+    function initPayload(you){return{t:'init',protocol:NET_PROTOCOL,you,time:state.time,tick:state.tick,revision:state.wallRevision,cycles:state.cycles.map(packCycle),walls:state.walls.map(packWall),scores:state.scores,chat:state.chat.map(({id,text,name,color,at})=>({id,text,name,color,at})),round:state.round,aiCount:state.aiCount,maxHumans:state.maxHumans,clearTrailsOnCrash:state.clearTrailsOnCrash}}
     function sendInit(targetPeer=null){if(targetPeer)return netSend(initPayload(targetPeer.id),targetPeer);for(const p of hostPeers.values())netSend(initPayload(p.id),p)}
-    function sendSnapshot(){netSend({t:'snap',time:+state.time.toFixed(3),cycles:state.cycles.map(packCycle),scores:state.scores,running:state.running,roundEnding:state.roundEnding})}
-    function sendWalls(){netSend({t:'walls',walls:state.walls.map(packWall)})}
-    function handleNet(m,peer){
-      if(isHost&&m.t==='hello'&&peer){
-        peer.name=cleanName(m.name||('RIDER '+peer.id));const c=state.cycles.find(x=>x.id===peer.id);if(c)c.name=peer.name;sendInit();
-      }else if(isHost&&m.t==='name'&&peer){
-        peer.name=cleanName(m.name);const c=state.cycles.find(x=>x.id===peer.id);if(c)c.name=peer.name;state.leaderSig='';sendInit();
-      }else if(isHost&&m.t==='chat'&&peer){
-        const c=state.cycles.find(x=>x.id===peer.id),suffix=cleanChatId(m.message?.id).split(':').pop(),message={id:peer.id+':'+suffix,text:cleanChatText(m.message?.text),name:peer.name,color:c?.color||COLORS[peer.id%COLORS.length],at:Date.now()};if(message.text&&suffix){acceptChat(message);netSend({t:'chat',message})}
-      }else if(isHost&&m.t==='input'&&peer){
-        const c=state.cycles.find(x=>x.id===peer.id);if(!c)return;if(m.action==='left'||m.action==='right')applyRemoteTurn(c,m);else if(m.action==='brake')c.brake=!!m.down;
-      }else if(isHost&&m.t==='restart')resetRound();
-      else if(!isHost&&m.t==='chat')acceptChat(m.message);
-      else if(!isHost&&m.t==='crash'){
-        spawnExplosion(m.x,m.z,m.color,m.id===state.localId);const c=state.cycles.find(x=>x.id===m.id);if(c){c.alive=false;c.respawnAt=m.respawnAt||state.time+4.35}if(m.id===state.localId){resetGuestPrediction();state.deathCam={x:m.x,z:m.z,at:state.time}}state.leaderSig='';
-      }else if(!isHost&&m.t==='init'){
-        resetGuestPrediction();state.mode='guest';state.localId=m.you;state.round=m.round;state.scores=m.scores;state.walls=m.walls;state.aiCount=m.aiCount;state.maxHumans=m.maxHumans;state.clearTrailsOnCrash=!!m.clearTrailsOnCrash;$('#aiRange').value=m.aiCount;$('#aiValue').textContent=m.aiCount;$('#maxRange').value=m.maxHumans;$('#maxValue').textContent=m.maxHumans;$('#clearTrailsToggle').checked=state.clearTrailsOnCrash;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;state.cycles=m.cycles.map(o=>Object.assign(makeCycle(o.id,o.name,o.color,o.x,o.z,o.dir,o.human,o.ai),o,{tx:o.x,tz:o.z,tdir:o.dir}));for(const message of m.chat||[])acceptChat(message);const mine=localCycle();if(mine){guestInputSeq=mine.inputAck||0;$('#playerName').value=mine.name;if(mine.alive)state.deathCam=null}state.leaderSig='';state.running=true;state.roundEnding=false;$('#chatBtn').disabled=false;setOnlineLoading(false);document.body.classList.add('playing');$('#resultWrap').classList.remove('open');
-      }else if(!isHost&&m.t==='wall'){state.walls.push(m.wall);if(m.wall.owner===state.localId&&m.wall.inputSeq)predictedWalls=predictedWalls.filter(w=>w.seq!==m.wall.inputSeq)}
-      else if(!isHost&&m.t==='walls')state.walls=m.walls;
-      else if(!isHost&&m.t==='snap'){
-        state.time=m.time;state.scores=m.scores;for(const o of m.cycles){let c=state.cycles.find(x=>x.id===o.id);if(!c){c=makeCycle(o.id,o.name,o.color,o.x,o.z,o.dir,o.human,o.ai);state.cycles.push(c)}const wasAlive=c.alive,isMine=c.id===state.localId;c.name=o.name;c.color=o.color;c.human=o.human;c.ai=o.ai;c.tx=o.x;c.tz=o.z;c.speed=o.speed;c.brakeEnergy=o.brakeEnergy;c.rubber=o.rubber;c.grind=o.grind;c.alive=o.alive;c.deathAt=o.deathAt||0;c.respawnAt=o.respawnAt||0;c.invuln=o.invuln||0;c.deaths=o.deaths||0;if(isMine){const ack=Math.max(c.inputAck||0,Math.floor(+o.inputAck||0));c.inputAck=ack;guestInputSeq=Math.max(guestInputSeq,ack);guestPendingTurns=guestPendingTurns.filter(turn=>turn.seq>ack);predictedWalls=predictedWalls.filter(w=>w.seq>ack);if(guestPendingTurns.length&&performance.now()-guestPendingTurns[0].at>700){guestPendingTurns=[];predictedWalls=[]}if(!guestPendingTurns.length){c.tdir=o.dir;c.trailX=o.trailX;c.trailZ=o.trailZ}}else{c.inputAck=o.inputAck||0;c.tdir=o.dir;c.trailX=o.trailX;c.trailZ=o.trailZ}if(isMine&&wasAlive&&!c.alive&&!state.deathCam)state.deathCam={x:o.x,z:o.z,at:state.time};if(isMine&&!wasAlive&&c.alive)state.deathCam=null}state.cycles=state.cycles.filter(c=>m.cycles.some(o=>o.id===c.id));state.leaderSig='';state.running=m.running;state.roundEnding=m.roundEnding;
+    function sendSnapshot(){netSend({t:'snap',round:state.round,time:state.time,tick:state.tick,revision:state.wallRevision,aiCount:state.aiCount,maxHumans:state.maxHumans,clearTrailsOnCrash:state.clearTrailsOnCrash,cycles:state.cycles.map(packCycle),scores:state.scores,running:state.running,roundEnding:state.roundEnding})}
+    function sendWalls(){netSend({t:'walls',round:state.round,revision:state.wallRevision,walls:state.walls.map(packWall)})}
+    function receiveSnapshot(m,initial=false){
+      if(!initial&&(m.round!==state.round||m.tick<=lastSnapshotTick))return;
+      if(m.revision>state.wallRevision){
+        pendingGuestSnapshot=m;
+        if(performance.now()-resyncAt>1000){resyncAt=performance.now();netSend({t:'resync'})}
+        return
       }
+      lastSnapshotTick=m.tick;pendingGuestSnapshot=null;state.time=m.time;state.tick=m.tick;state.scores=m.scores;
+      if(Number.isInteger(m.aiCount)&&m.aiCount!==state.aiCount){state.aiCount=m.aiCount;$('#aiRange').value=m.aiCount;$('#aiValue').textContent=m.aiCount}
+      if(Number.isInteger(m.maxHumans)&&m.maxHumans!==state.maxHumans){state.maxHumans=m.maxHumans;$('#maxRange').value=m.maxHumans;$('#maxValue').textContent=m.maxHumans}
+      if(typeof m.clearTrailsOnCrash==='boolean'){state.clearTrailsOnCrash=m.clearTrailsOnCrash;$('#clearTrailsToggle').checked=m.clearTrailsOnCrash}
+      const now=performance.now();let mine=null;
+      for(const o of m.cycles){
+        let c=state.cycles.find(x=>x.id===o.id);
+        if(!c){c=makeCycle(o.id,o.name,o.color,o.x,o.z,o.dir,o.human,o.ai);state.cycles.push(c)}
+        if(o.id===state.localId)mine=o;
+        else Object.assign(c,o,{tx:o.x,tz:o.z,tdir:o.dir,turnQueue:[],receivedAt:now})
+      }
+      state.cycles=state.cycles.filter(c=>m.cycles.some(o=>o.id===c.id));
+      if(mine)reconcileGuest(mine,m.tick,now);
+      state.leaderSig='';state.running=m.running!==false;state.roundEnding=!!m.roundEnding
     }
+    function flushGuestSnapshot(){if(pendingGuestSnapshot&&pendingGuestSnapshot.revision<=state.wallRevision)receiveSnapshot(pendingGuestSnapshot)}
+    function handleNet(m,peer){
+      if(isHost&&peer){
+        if(m.t==='ping'){netSend({t:'pong',at:m.at},peer);return}
+        if(m.t==='resync'){sendInit(peer);return}
+        if(m.t==='hello'||m.t==='name'){
+          peer.name=cleanName(m.name||('RIDER '+peer.id));const c=state.cycles.find(x=>x.id===peer.id);if(c)c.name=peer.name;state.leaderSig='';sendInit();return
+        }
+        if(m.t==='chat'){
+          const c=state.cycles.find(x=>x.id===peer.id),suffix=cleanChatId(m.message?.id).split(':').pop(),message={id:peer.id+':'+suffix,text:cleanChatText(m.message?.text),name:peer.name,color:c?.color||COLORS[peer.id%COLORS.length],at:Date.now()};
+          if(message.text&&suffix){acceptChat(message);netSend({t:'chat',message})}return
+        }
+        if(m.t==='input'){queueRemoteInput(state.cycles.find(x=>x.id===peer.id),m);return}
+        return
+      }
+      if(isHost)return;
+      if(m.t==='pong'){const rtt=(performance.now()-m.at)/1000;if(rtt>0&&rtt<2)netRtt=lerp(netRtt,rtt,.25);return}
+      if(m.t==='chat'){acceptChat(m.message);return}
+      if(m.t==='init'){
+        if(m.protocol!==NET_PROTOCOL){setConn('Game updated · reload to reconnect');return}
+        const newRound=state.mode!=='guest'||state.round!==m.round||state.localId!==m.you;
+        if(!newRound&&(m.tick<lastSnapshotTick||m.revision<state.wallRevision))return;
+        if(newRound){resetGuestPrediction();state.cycles=[];state.deathCam=null}
+        state.mode='guest';state.localId=m.you;state.round=m.round;state.walls=m.walls;state.wallRevision=m.revision;
+        state.aiCount=m.aiCount;state.maxHumans=m.maxHumans;state.clearTrailsOnCrash=!!m.clearTrailsOnCrash;
+        $('#aiRange').value=m.aiCount;$('#aiValue').textContent=m.aiCount;$('#maxRange').value=m.maxHumans;$('#maxValue').textContent=m.maxHumans;$('#clearTrailsToggle').checked=state.clearTrailsOnCrash;
+        $('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;
+        receiveSnapshot(m,true);for(const message of m.chat||[])acceptChat(message);
+        const mine=localCycle();if(mine)$('#playerName').value=mine.name;
+        $('#chatBtn').disabled=false;setOnlineLoading(false);document.body.classList.add('playing');$('#resultWrap').classList.remove('open');return
+      }
+      if(m.round!==state.round)return;
+      if(m.t==='crash'){
+        const c=state.cycles.find(x=>x.id===m.id);if(!c||c.life!==m.life)return;
+        if(c.alive)spawnExplosion(m.x,m.z,m.color,m.id===state.localId);
+        c.alive=false;c.x=m.x;c.z=m.z;c.respawnAt=m.respawnAt;
+        if(m.id===state.localId){guestPendingTurns=[];predictedWalls=[];state.deathCam={x:m.x,z:m.z,at:state.time}}
+        state.leaderSig='';return
+      }
+      if(m.t==='wall'){
+        if(m.revision===state.wallRevision+1){state.walls.push(m.wall);state.wallRevision=m.revision;flushGuestSnapshot()}
+        else if(m.revision>state.wallRevision+1&&performance.now()-resyncAt>1000){resyncAt=performance.now();netSend({t:'resync'})}
+        return
+      }
+      if(m.t==='walls'){
+        if(m.revision>=state.wallRevision){state.walls=m.walls;state.wallRevision=m.revision;flushGuestSnapshot()}return
+      }
+      if(m.t==='snap')receiveSnapshot(m)
+    }
+
 
     function selectedFlow(){return localStorage.getItem('grid-room-flow')==='private'?'private':'public'}function openNetwork(){audio.init();selectFlow(selectedFlow());setRulesOpen(true)}function closeNetwork(){setRulesOpen(false)}function selectFlow(name){localStorage.setItem('grid-room-flow',name);$$('.mode-switch button').forEach(x=>x.classList.toggle('active',x.dataset.flow===name));const b=$('#startOnlineSettings');if(b)b.textContent=name==='private'?'Create private room':'Find public match'}
     function createPrivateRoom(){setOnlineLoading(true);const code=setPrivateInvite('PRI-'+randomRoomPart(10));publicJoinMode='';setConn('Creating a private room…');joinAutoRoom(code,false)}function startSelectedOnline(){audio.init();if(selectedFlow()==='private')createPrivateRoom();else matchPublicRoom()}
