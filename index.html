@@ -124,10 +124,10 @@
     const COLORS=['#31ecff','#ff3da8','#ffd84a','#76ff74','#9d7bff','#ff784f','#38ffbd','#ff69e1','#b9ff4d','#48a7ff','#ffb347','#d7f2ff'];
     const DIRS=[{x:0,z:-1},{x:1,z:0},{x:0,z:1},{x:-1,z:0}];
     const cfg={baseSpeed:22.2,maxSpeed:82,minSpeed:7.5,turnFactor:.94,turnDelay:.008,wallNear:7.5,wallHeight:1.48,blastRadius:4.4};
-    const SIM_DT=1/60,NET_PROTOCOL=5;
+    const SIM_DT=1/60,NET_PROTOCOL=6;
 
     function storedInt(key,fallback,min,max){const n=Number.parseInt(localStorage.getItem(key),10);return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback}
-    const state={mode:'menu',running:false,time:0,tick:0,wallRevision:0,needsSnapshot:false,round:0,roundEnding:false,cycles:[],walls:[],particles:[],scores:[],chat:[],nextWall:1,nextCycle:100,accum:0,last:performance.now(),sendClock:0,camMode:storedInt('grid-camera',0,0,2),localId:0,shake:0,aiCount:storedInt('grid-ai-count',3,0,6),maxHumans:storedInt('grid-max-humans',4,2,6),clearTrailsOnCrash:false,roomId:'',deathCam:null,leaderSig:'',leaderRenderAt:0};
+    const state={mode:'menu',running:false,time:0,tick:0,wallRevision:0,needsSnapshot:false,round:0,roundEnding:false,cycles:[],walls:[],particles:[],scores:[],chat:[],nextWall:1,nextCycle:100,accum:0,simLast:performance.now(),last:performance.now(),sendClock:0,camMode:storedInt('grid-camera',0,0,2),localId:0,shake:0,aiCount:storedInt('grid-ai-count',3,0,6),maxHumans:storedInt('grid-max-humans',4,2,6),clearTrailsOnCrash:false,roomId:'',deathCam:null,leaderSig:'',leaderRenderAt:0};
     let isHost=false,toastTimer=0,installPrompt=null,autoRoom=null,autoAction=null,autoSelf='',autoHostPeer='',autoConnectTimer=0,autoRoomId='',autoIsPublic=false,publicJoinMode='',publicInviteLink='',privateInviteLink='',directoryRoom=null,directoryAction=null,directoryTimer=0,publicMatchTimer=0,publicProbeTimers=[],publicMatchPending=false,minimapAt=0,guestInputSeq=0,guestPendingTurns=[],predictedWalls=[],guestTick=0,guestAnchor=null,netRtt=.1,netPingAt=0,lastSnapshotTick=-1,guestAck=0,pendingGuestSnapshot=null,resyncAt=0;
     const hostPeers=new Map(),chatSeen=new Set(),publicCandidates=new Map();
 
@@ -143,19 +143,68 @@
     function packWall(w){return{id:w.id,owner:w.owner,x1:w.x1,z1:w.z1,x2:w.x2,z2:w.z2,color:w.color,born:w.born,expire:w.expire??null,inputSeq:w.inputSeq||0,life:w.life}}
 
 
+    const MUSIC_BPM=108,MUSIC_STEP=60/MUSIC_BPM/4;
+    const MUSIC_CHORDS=[[52,55,59,66],[48,52,55,59],[45,48,52,59],[47,50,54,57]],MUSIC_ROOTS=[40,36,33,35];
+    const MUSIC_MELODY=[
+      [[0,71,5],[6,67,2],[10,66,3],[14,64,6],[24,67,3],[28,69,3]],
+      [[0,67,6],[8,64,4],[14,62,6],[24,64,3],[28,67,3]],
+      [[0,69,5],[8,67,3],[12,64,6],[22,62,3],[26,64,5]],
+      [[0,66,5],[8,69,3],[12,71,6],[22,69,3],[26,66,3],[30,67,2]]
+    ];
     class Soundscape{
-      constructor(){this.ctx=null;this.master=null;this.musicBus=null;this.engine=null;this.engineGain=null;this.whine=null;this.whineGain=null;this.filter=null;this.echo=null;this.musicTimer=0;this.step=0;this.musicStarted=false;this.unlockCuePlayed=false;this.muted=localStorage.getItem('grid-muted')==='1';this.musicEnabled=localStorage.getItem('grid-music')!=='0'}
-      async init(cue=false){if(this.ctx){try{await this.ctx.resume()}catch{}this.onRunning(cue);return this.ctx.state==='running'}const A=window.AudioContext||window.webkitAudioContext;if(!A)return false;this.ctx=new A;this.master=this.ctx.createGain();this.master.gain.value=this.muted?0:.58;this.master.connect(this.ctx.destination);this.musicBus=this.ctx.createGain();this.musicBus.gain.value=this.musicEnabled ? .82 : 0;this.musicBus.connect(this.master);this.echo=this.ctx.createDelay(.8);this.echo.delayTime.value=.18;const feedback=this.ctx.createGain(),echoReturn=this.ctx.createGain();feedback.gain.value=.22;echoReturn.gain.value=.17;this.echo.connect(feedback).connect(this.echo);this.echo.connect(echoReturn).connect(this.master);this.filter=this.ctx.createBiquadFilter();this.filter.type='lowpass';this.filter.frequency.value=420;this.filter.Q.value=3;this.filter.connect(this.master);this.filter.connect(this.echo);this.engine=this.ctx.createOscillator();this.engine.type='sawtooth';this.engine.frequency.value=62;this.engineGain=this.ctx.createGain();this.engineGain.gain.value=0;this.engine.connect(this.engineGain).connect(this.filter);this.engine.start();this.whine=this.ctx.createOscillator();this.whine.type='triangle';this.whine.frequency.value=160;this.whineGain=this.ctx.createGain();this.whineGain.gain.value=0;this.whine.connect(this.whineGain);this.whineGain.connect(this.master);this.whineGain.connect(this.echo);this.whine.start();this.musicTimer=setInterval(()=>this.music(),134);try{await this.ctx.resume()}catch{}this.onRunning(cue);return this.ctx.state==='running'}
-      onRunning(cue=false){if(!this.ctx||this.ctx.state!=='running'||this.muted)return;if(this.musicEnabled&&!this.musicStarted){this.musicStarted=true;this.music()}if(cue&&!this.unlockCuePlayed){this.unlockCuePlayed=true;this.tone(220,.075,'triangle',.026)}}
-      update(c){if(!this.ctx)return;const t=this.ctx.currentTime;if(!c||state.mode==='menu'){this.engineGain?.gain.setTargetAtTime(0,t,.05);this.whineGain?.gain.setTargetAtTime(0,t,.05);return}const s=c.speed||cfg.baseSpeed;this.engineGain.gain.setTargetAtTime(.075,t,.05);this.whineGain.gain.setTargetAtTime(.022,t,.05);this.engine.frequency.setTargetAtTime(38+s*2.15,t,.06);this.whine.frequency.setTargetAtTime(90+s*8.2+(c.grind||0)*100,t,.08);this.filter.frequency.setTargetAtTime(260+s*23,t,.08)}
-      tone(freq=.0,dur=.08,type='square',gain=.08){if(!this.ctx||this.muted)return;const t=this.ctx.currentTime,o=this.ctx.createOscillator(),g=this.ctx.createGain();o.type=type;o.frequency.setValueAtTime(freq,t);o.frequency.exponentialRampToValueAtTime(Math.max(20,freq*.82),t+dur);g.gain.setValueAtTime(gain,t);g.gain.exponentialRampToValueAtTime(.0001,t+dur);o.connect(g);g.connect(this.master);g.connect(this.echo);o.start(t);o.stop(t+dur+.02)}
-      noise(dur=.35,gain=.13){if(!this.ctx||this.muted)return;const n=Math.floor(this.ctx.sampleRate*dur),b=this.ctx.createBuffer(1,n,this.ctx.sampleRate),d=b.getChannelData(0);for(let i=0;i<n;i++)d[i]=(Math.random()*2-1)*(1-i/n);const s=this.ctx.createBufferSource(),f=this.ctx.createBiquadFilter(),g=this.ctx.createGain();s.buffer=b;f.type='lowpass';f.frequency.value=900;g.gain.value=gain;s.connect(f).connect(g);g.connect(this.master);g.connect(this.echo);s.start()}
-      music(){if(!this.ctx||this.ctx.state!=='running'||this.muted||!this.musicEnabled)return;const cell=this.step%16,bar=(this.step/16|0)%4,roots=[82.41,65.41,49,73.42],chords=[[164.81,196,246.94],[130.81,164.81,196],[146.83,196,246.94],[146.83,185,220]],pattern=[0,1,2,1,0,2,1,2,0,1,2,1,2,1,0,2],chord=chords[bar],root=roots[bar];if(cell%4===0)this.kick();if(cell===4||cell===12)this.snare();if(cell%2===0){const bassStep=cell/2,mult=[1,1,2,1,1.5,1,2,1.5][bassStep];this.note(root*mult,.24,.043,'sawtooth',610,bassStep%2?-4:4)}const arp=chord[pattern[cell]]*(cell===7||cell===15?2:1);this.note(arp,.112,.013,'square',2400,cell%2?-6:6);if(cell===0)for(const f of chord)this.note(f,2.05,.011,'triangle',980,(f===chord[1]?5:-5));this.step++}
-      note(f,d,gain,type,cutoff=900,detune=0){const t=this.ctx.currentTime,o=this.ctx.createOscillator(),g=this.ctx.createGain(),filt=this.ctx.createBiquadFilter();o.type=type;o.frequency.value=f;o.detune.value=detune;filt.type='lowpass';filt.frequency.value=cutoff;g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(gain,t+.018);g.gain.exponentialRampToValueAtTime(.0001,t+d);o.connect(filt).connect(g).connect(this.musicBus);o.start(t);o.stop(t+d+.03)}
-      kick(){const t=this.ctx.currentTime,o=this.ctx.createOscillator(),g=this.ctx.createGain();o.type='sine';o.frequency.setValueAtTime(132,t);o.frequency.exponentialRampToValueAtTime(43,t+.13);g.gain.setValueAtTime(.14,t);g.gain.exponentialRampToValueAtTime(.0001,t+.16);o.connect(g).connect(this.musicBus);o.start(t);o.stop(t+.18)}
-      snare(){const t=this.ctx.currentTime,n=Math.floor(this.ctx.sampleRate*.14),b=this.ctx.createBuffer(1,n,this.ctx.sampleRate),d=b.getChannelData(0);for(let i=0;i<n;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/n,2);const s=this.ctx.createBufferSource(),f=this.ctx.createBiquadFilter(),g=this.ctx.createGain();s.buffer=b;f.type='highpass';f.frequency.value=1150;g.gain.setValueAtTime(.048,t);g.gain.exponentialRampToValueAtTime(.0001,t+.14);s.connect(f).connect(g).connect(this.musicBus);s.start(t);this.note(185,.085,.014,'triangle',850)}
+      constructor(){this.ctx=null;this.master=null;this.musicBus=null;this.engine=null;this.engineGain=null;this.whine=null;this.whineGain=null;this.filter=null;this.echo=null;this.musicTimer=0;this.step=0;this.nextNoteTime=0;this.musicStarted=false;this.unlockCuePlayed=false;this.muted=localStorage.getItem('grid-muted')==='1';this.musicEnabled=localStorage.getItem('grid-music')!=='0'}
+      async init(cue=false){
+        if(this.ctx){try{await this.ctx.resume()}catch{}this.onRunning(cue);return this.ctx.state==='running'}
+        const A=window.AudioContext||window.webkitAudioContext;if(!A)return false;this.ctx=new A;
+        this.master=this.ctx.createGain();this.master.gain.value=this.muted?0:.58;
+        const limiter=this.ctx.createDynamicsCompressor();limiter.threshold.value=-10;limiter.knee.value=10;limiter.ratio.value=4;limiter.attack.value=.008;limiter.release.value=.2;this.master.connect(limiter).connect(this.ctx.destination);
+        this.musicBus=this.ctx.createGain();this.musicBus.gain.value=this.musicEnabled ? .76 : 0;this.musicBus.connect(this.master);
+        // A separate restrained music space; motor echo never receives the score.
+        this.musicSpace=this.ctx.createDelay(1);this.musicSpace.delayTime.value=60/MUSIC_BPM*.75;
+        const musicFeedback=this.ctx.createGain(),musicReturn=this.ctx.createGain(),musicDamp=this.ctx.createBiquadFilter();
+        musicFeedback.gain.value=.2;musicReturn.gain.value=.15;musicDamp.type='lowpass';musicDamp.frequency.value=1750;
+        this.musicSpace.connect(musicDamp);musicDamp.connect(musicFeedback).connect(this.musicSpace);musicDamp.connect(musicReturn).connect(this.musicBus);
+        this.echo=this.ctx.createDelay(.8);this.echo.delayTime.value=.18;const feedback=this.ctx.createGain(),echoReturn=this.ctx.createGain();feedback.gain.value=.22;echoReturn.gain.value=.17;this.echo.connect(feedback).connect(this.echo);this.echo.connect(echoReturn).connect(this.master);
+        this.filter=this.ctx.createBiquadFilter();this.filter.type='lowpass';this.filter.frequency.value=420;this.filter.Q.value=3;this.filter.connect(this.master);this.filter.connect(this.echo);
+        this.engine=this.ctx.createOscillator();this.engine.type='sawtooth';this.engine.frequency.value=62;this.engineGain=this.ctx.createGain();this.engineGain.gain.value=0;this.engine.connect(this.engineGain).connect(this.filter);this.engine.start();
+        this.whine=this.ctx.createOscillator();this.whine.type='triangle';this.whine.frequency.value=160;this.whineGain=this.ctx.createGain();this.whineGain.gain.value=0;this.whine.connect(this.whineGain);this.whineGain.connect(this.master);this.whineGain.connect(this.echo);this.whine.start();
+        this.drumNoise=this.ctx.createBuffer(1,Math.floor(this.ctx.sampleRate*.3),this.ctx.sampleRate);const data=this.drumNoise.getChannelData(0);for(let i=0;i<data.length;i++)data[i]=Math.random()*2-1;
+        this.musicTimer=setInterval(()=>this.music(),25);try{await this.ctx.resume()}catch{}this.onRunning(cue);return this.ctx.state==='running'
+      }
+      onRunning(cue=false){if(!this.ctx||this.ctx.state!=='running'||this.muted)return;if(this.musicEnabled){this.musicStarted=true;this.music()}if(cue&&!this.unlockCuePlayed){this.unlockCuePlayed=true;this.tone(220,.075,'triangle',.026)}}
+      update(c){if(!this.ctx)return;const t=this.ctx.currentTime;if(!c||!c.alive||state.mode==='menu'){this.engineGain?.gain.setTargetAtTime(0,t,.05);this.whineGain?.gain.setTargetAtTime(0,t,.05);return}const s=c.speed||cfg.baseSpeed;this.engineGain.gain.setTargetAtTime(.075,t,.05);this.whineGain.gain.setTargetAtTime(.022,t,.05);this.engine.frequency.setTargetAtTime(38+s*2.15,t,.06);this.whine.frequency.setTargetAtTime(90+s*8.2+(c.grind||0)*100,t,.08);this.filter.frequency.setTargetAtTime(260+s*23,t,.08)}
+      tone(freq=0,dur=.08,type='square',gain=.08){if(!this.ctx||this.muted)return;const t=this.ctx.currentTime,o=this.ctx.createOscillator(),g=this.ctx.createGain();o.type=type;o.frequency.setValueAtTime(freq,t);o.frequency.exponentialRampToValueAtTime(Math.max(20,freq*.82),t+dur);g.gain.setValueAtTime(gain,t);g.gain.exponentialRampToValueAtTime(.0001,t+dur);o.connect(g);g.connect(this.master);g.connect(this.echo);o.start(t);o.stop(t+dur+.02);o.onended=()=>{o.disconnect();g.disconnect()}}
+      noise(dur=.35,gain=.13){if(!this.ctx||this.muted)return;const n=Math.floor(this.ctx.sampleRate*dur),b=this.ctx.createBuffer(1,n,this.ctx.sampleRate),d=b.getChannelData(0);for(let i=0;i<n;i++)d[i]=(Math.random()*2-1)*(1-i/n);const s=this.ctx.createBufferSource(),f=this.ctx.createBiquadFilter(),g=this.ctx.createGain();s.buffer=b;f.type='lowpass';f.frequency.value=900;g.gain.value=gain;s.connect(f).connect(g);g.connect(this.master);g.connect(this.echo);s.start();s.onended=()=>{s.disconnect();f.disconnect();g.disconnect()}}
+      music(){
+        if(!this.ctx||this.ctx.state!=='running'||this.muted||!this.musicEnabled)return;const now=this.ctx.currentTime;
+        if(!this.nextNoteTime)this.nextNoteTime=now+.035;
+        if(this.nextNoteTime<now-.05){this.step=Math.ceil(this.step/16)*16;this.nextNoteTime=now+.035}
+        // Schedule by the audio clock: callback jitter does not move individual beats.
+        while(this.nextNoteTime<now+.18){this.musicCell(this.step++,this.nextNoteTime);this.nextNoteTime+=MUSIC_STEP}
+      }
+      musicCell(step,t){
+        const cell=step%16,phrase=step%32,chordIndex=Math.floor(step/32)%4,section=Math.floor(step/128)%4,chord=MUSIC_CHORDS[chordIndex],root=MUSIC_ROOTS[chordIndex],hz=m=>440*2**((m-69)/12),soft=section===2;
+        if(cell%4===0)this.kick(t,soft ? .095 : .12);
+        if(cell===4||cell===12)this.snare(t);
+        if(cell%2===0)this.hat(t,cell===14?.085:.035,cell%4===2?.009:.005);
+        if(cell%2===0){const octave=[0,0,12,0,0,7,0,12][cell/2];this.note(hz(root+octave),MUSIC_STEP*1.65,.038,'sawtooth',520,0,t);this.note(hz(root),MUSIC_STEP*1.5,.016,'triangle',240,0,t)}
+        if(!soft||cell%2===0){const arp=[0,2,1,3,2,1,3,2][cell%8],f=hz(chord[arp]+12);this.note(f,MUSIC_STEP*.82,.0065,'triangle',1850,cell%2?-4:4,t)}
+        if(phrase===0)for(const midi of chord)for(const detune of [-5,5])this.note(hz(midi),MUSIC_STEP*31,.0048,'triangle',1150,detune,t,.38,true);
+        for(const [at,midi,length] of MUSIC_MELODY[chordIndex])if(phrase===at){
+          const f=hz(midi+(section===3&&at>=24?12:0)),duration=MUSIC_STEP*length*.9,gain=soft ? .016 : .022;
+          this.note(f,duration,gain,'triangle',2200,-3,t,.045,true);this.note(f,duration,gain*.25,'sawtooth',1350,4,t,.055,true)
+        }
+      }
+      note(f,d,gain,type,cutoff=900,detune=0,t=this.ctx.currentTime,attack=.015,space=false){
+        const o=this.ctx.createOscillator(),g=this.ctx.createGain(),filter=this.ctx.createBiquadFilter();o.type=type;o.frequency.value=f;o.detune.value=detune;filter.type='lowpass';filter.frequency.setValueAtTime(cutoff,t);filter.frequency.exponentialRampToValueAtTime(Math.max(180,cutoff*.6),t+d);
+        g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(gain,t+Math.min(attack,d*.45));g.gain.setTargetAtTime(.0001,t+d*.72,Math.max(.025,d*.12));o.connect(filter).connect(g).connect(this.musicBus);if(space)g.connect(this.musicSpace);o.start(t);o.stop(t+d+.16);o.onended=()=>{o.disconnect();filter.disconnect();g.disconnect()}
+      }
+      kick(t=this.ctx.currentTime,gain=.12){const o=this.ctx.createOscillator(),g=this.ctx.createGain();o.type='sine';o.frequency.setValueAtTime(140,t);o.frequency.exponentialRampToValueAtTime(46,t+.12);g.gain.setValueAtTime(gain,t);g.gain.exponentialRampToValueAtTime(.0001,t+.19);o.connect(g).connect(this.musicBus);o.start(t);o.stop(t+.21);o.onended=()=>{o.disconnect();g.disconnect()}}
+      drum(t,duration,gain,cutoff,type){const s=this.ctx.createBufferSource(),f=this.ctx.createBiquadFilter(),g=this.ctx.createGain();s.buffer=this.drumNoise;f.type=type;f.frequency.value=cutoff;g.gain.setValueAtTime(gain,t);g.gain.exponentialRampToValueAtTime(.0001,t+duration);s.connect(f).connect(g).connect(this.musicBus);s.start(t);s.stop(t+duration+.02);s.onended=()=>{s.disconnect();f.disconnect();g.disconnect()}}
+      snare(t=this.ctx.currentTime){this.drum(t,.16,.037,1350,'highpass');this.note(175,.095,.013,'triangle',700,0,t)}
+      hat(t,duration,gain){this.drum(t,duration,gain,6500,'highpass')}
       async toggle(){this.muted=!this.muted;localStorage.setItem('grid-muted',this.muted?'1':'0');if(this.master)this.master.gain.setTargetAtTime(this.muted?0:.58,this.ctx.currentTime,.03);syncSoundButton(this.muted);showToast(this.muted?'Audio muted':'Audio on');if(!this.muted)await this.init(true)}
-      setMusic(enabled){this.musicEnabled=!!enabled;localStorage.setItem('grid-music',this.musicEnabled?'1':'0');if(this.musicBus)this.musicBus.gain.setTargetAtTime(this.musicEnabled ? .82 : 0,this.ctx.currentTime,.04);if(this.musicEnabled)this.onRunning(false);syncMusicToggle();showToast(this.musicEnabled?'Music on':'Music off')}
+      setMusic(enabled){this.musicEnabled=!!enabled;localStorage.setItem('grid-music',this.musicEnabled?'1':'0');if(this.musicBus)this.musicBus.gain.setTargetAtTime(this.musicEnabled ? .76 : 0,this.ctx.currentTime,.08);if(this.musicEnabled){this.nextNoteTime=0;this.onRunning(false)}syncMusicToggle();showToast(this.musicEnabled?'Music on':'Music off')}
     }
     function syncSoundButton(muted){const b=$('#soundBtn');b.classList.toggle('muted',muted);b.setAttribute('aria-pressed',String(muted));b.setAttribute('aria-label',muted?'Enable audio':'Mute audio');b.dataset.tip=muted?'Audio muted · press to enable':'Audio on · press to mute'}
     function syncMusicToggle(){$('#musicToggle').checked=audio.musicEnabled}
@@ -177,22 +226,52 @@
     function resetChat(){state.chat=[];chatSeen.clear();$('#chatCompose').classList.remove('open');$('#chatInput').value='';syncChatButton(false);renderChat()}
     function setChatOpen(open){if(open&&(state.mode==='menu'||!state.running))return;const form=$('#chatCompose');form.classList.toggle('open',!!open);syncChatButton(!!open);if(open){setRulesOpen(false);$('#chatInput').focus()}else{$('#chatInput').value='';$('#chatInput').blur()}}
     function sendChat(value){const text=cleanChatText(value),c=localCycle();if(!text||!c)return;const message={id:c.id+':'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7),text,name:c.name,color:c.color,at:Date.now()};acceptChat(message);if(state.mode==='host'||state.mode==='guest')netSend({t:'chat',message})}
-    function startSolo(){audio.init();clearCurrentInvite();resetChat();resetGuestPrediction();applyLocalPreferences();isHost=false;state.mode='solo';state.localId=0;state.scores=[];$('#aiRange').disabled=false;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;$('#clearTrailsToggle').checked=false;resetRound();$('#chatBtn').disabled=false;document.body.classList.add('playing');closeNetwork();$('#resultWrap').classList.remove('open');showToast('Grid online · stay alive')}
-    function beginHostRoom(){audio.init();if(state.mode==='host'&&state.running)return;resetChat();resetGuestPrediction();applyLocalPreferences();if(autoIsPublic){state.aiCount=0;$('#aiRange').value=0;$('#aiValue').textContent='0'}isHost=true;state.mode='host';state.localId=0;state.scores=[];state.roomId=Math.random().toString(36).slice(2,8).toUpperCase();$('#aiRange').disabled=false;$('#maxRange').disabled=false;$('#clearTrailsToggle').disabled=false;resetRound();$('#chatBtn').disabled=false;document.body.classList.add('playing');showToast('Arena open · start riding')}
+    function startSolo(){advertisePublicRoom(null,false);roomGeneration++;if(autoRoom)try{autoRoom.leave()}catch{}autoRoom=autoAction=null;autoHostPeer='';autoIsPublic=false;autoRoomId='';publicJoinMode='';closePublicDirectory();audio.init();clearCurrentInvite();resetChat();resetGuestPrediction();applyLocalPreferences();isHost=false;state.mode='solo';state.localId=0;state.scores=[];$('#aiRange').disabled=false;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;$('#clearTrailsToggle').checked=false;resetRound();$('#chatBtn').disabled=false;document.body.classList.add('playing');closeNetwork();$('#resultWrap').classList.remove('open');showToast('Grid online · stay alive')}
+    function beginHostRoom(roomOptions=null){audio.init();if(state.mode==='host'&&state.running)return;resetChat();resetGuestPrediction();applyLocalPreferences();if(autoIsPublic&&!roomOptions){state.aiCount=0;$('#aiRange').value=0;$('#aiValue').textContent='0'}if(roomOptions){Object.assign(state,roomOptions);$('#aiRange').value=state.aiCount;$('#aiValue').textContent=state.aiCount;$('#maxRange').value=state.maxHumans;$('#maxValue').textContent=state.maxHumans;$('#clearTrailsToggle').checked=state.clearTrailsOnCrash}isHost=true;state.mode='host';state.localId=0;state.scores=[];state.roomId=Math.random().toString(36).slice(2,8).toUpperCase();$('#aiRange').disabled=false;$('#maxRange').disabled=false;$('#clearTrailsToggle').disabled=false;resetRound();$('#chatBtn').disabled=false;document.body.classList.add('playing');showToast('Arena open · start riding')}
     function resetRound(){state.time=0;state.tick=0;state.wallRevision=0;state.accum=0;state.needsSnapshot=false;resetGuestPrediction();state.round++;state.running=true;state.roundEnding=false;state.walls=[];state.particles=[];state.nextWall=1;state.nextCycle=100;state.deathCam=null;state.leaderSig='';$('#resultWrap').classList.remove('open');
       if(state.mode==='solo')state.cycles=[makeCycle(0,cleanName($('#playerName').value),COLORS[0],0,18,0,true,false)];
       else if(state.mode==='host'){const connected=[...hostPeers.values()];state.cycles=[makeCycle(0,cleanName($('#playerName').value),COLORS[0],-10,8,1,true,false),...connected.map((p,i)=>{const pos=humanSpawn(i+1,connected.length+1);return makeCycle(p.id,p.name||('RIDER '+p.id),COLORS[p.id%COLORS.length],pos.x,pos.z,pos.dir,true,false)})]}
       state.localId=state.mode==='solo'||state.mode==='host'?0:1;syncAICount(state.aiCount,false);updateHUD();if(isHost&&state.mode==='host')sendInit()}
     function humanSpawn(index,total){const points=[{x:10,z:-8,dir:3},{x:0,z:-18,dir:2},{x:18,z:10,dir:0},{x:-18,z:-10,dir:1},{x:4,z:24,dir:0}];return points[(index-1)%points.length]}
-    function safeBotSpawn(index){const anchor=state.cycles.find(c=>c.human&&c.alive)||localCycle()||{x:0,z:0};for(let k=0;k<16;k++){const a=(index*.91+k*.73),r=25+(index%3)*7+k*.8,x=anchor.x+Math.cos(a)*r,z=anchor.z+Math.sin(a)*r;const safeCycles=state.cycles.every(c=>Math.hypot(c.x-x,c.z-z)>9),safeWalls=state.walls.every(w=>pointSegDistance(x,z,w)>4);if(safeCycles&&safeWalls)return{x,z,dir:(Math.round(a/Math.PI*2)+1)%4}}return{x:anchor.x+28+index*3,z:anchor.z+22,dir:3}}
+    function safeBotSpawn(index){return chooseSafeSpawn(-1,index*.91)}
     function pointSegDistance(x,z,w){const vx=w.x2-w.x1,vz=w.z2-w.z1,l=vx*vx+vz*vz,t=l?clamp(((x-w.x1)*vx+(z-w.z1)*vz)/l,0,1):0;return Math.hypot(x-(w.x1+vx*t),z-(w.z1+vz*t))}
     function largestClusterCenter(){const alive=state.cycles.filter(c=>c.alive);if(!alive.length)return{x:0,z:0};let best=[];const seen=new Set;for(const seed of alive){if(seen.has(seed.id))continue;const group=[],queue=[seed];seen.add(seed.id);while(queue.length){const c=queue.shift();group.push(c);for(const o of alive)if(!seen.has(o.id)&&Math.hypot(c.x-o.x,c.z-o.z)<82){seen.add(o.id);queue.push(o)}}if(group.length>best.length)best=group}return{x:best.reduce((s,c)=>s+c.x,0)/best.length,z:best.reduce((s,c)=>s+c.z,0)/best.length}}
-    function inMovingLane(x,z,ignoreId){for(const o of state.cycles){if(!o.alive||o.id===ignoreId)continue;const d=DIRS[o.dir],dx=x-o.x,dz=z-o.z,forward=dx*d.x+dz*d.z,lateral=Math.abs(dx*(-d.z)+dz*d.x);if(forward>0&&forward<25&&lateral<6.5)return true}return false}
-    function safeRespawn(c){const center=largestClusterCenter(),alive=state.cycles.filter(o=>o.alive&&o.id!==c.id);let best=null,bestScore=-1e9;for(const radius of [23,29,36,43])for(let i=0;i<20;i++){const a=i/20*Math.PI*2+state.time*.071,x=center.x+Math.cos(a)*radius,z=center.z+Math.sin(a)*radius,cycleGap=alive.reduce((m,o)=>Math.min(m,Math.hypot(x-o.x,z-o.z)),999),wallGap=state.walls.reduce((m,w)=>Math.min(m,pointSegDistance(x,z,w)),999);if(cycleGap<11||wallGap<4.2||inMovingLane(x,z,c.id))continue;for(let dir=0;dir<4;dir++){const probe={...c,x,z,dir},clear=rayDistance(probe,DIRS[dir],55),score=Math.min(clear,38)+Math.min(cycleGap,26)*.4+Math.min(wallGap,15)*.5-Math.abs(radius-29)*.22;if(clear>8&&score>bestScore){bestScore=score;best={x,z,dir}}}}return best||{x:center.x+31,z:center.z+31,dir:3}}
-    function respawnCycle(c){const p=safeRespawn(c);Object.assign(c,{x:p.x,z:p.z,tx:p.x,tz:p.z,dir:p.dir,tdir:p.dir,speed:cfg.baseSpeed,brake:false,brakeEnergy:1,rubber:0,rubberWall:null,grind:0,alive:true,turnQueue:[],turnCooldown:0,life:c.life+1,trailX:p.x,trailZ:p.z,ignoreWall:0,junctionX:p.x,junctionZ:p.z,nextAI:1.1+Math.random()*1.4,respawnAt:0,invuln:1.15});if(c.id===state.localId)state.deathCam=null;state.leaderSig='';if(isHost&&state.mode==='host')state.needsSnapshot=true}
+    function spawnRay(x,z,dir,walls){const probe={id:-999,x,z,ignoreWall:0},d=DIRS[dir];let clear=Infinity;for(const w of walls)clear=Math.min(clear,segmentDistance(probe,d,w));return clear}
+    function spawnRunwaySafe(x,z,dir,alive){
+      const d=DIRS[dir],runway={x1:x,z1:z,x2:x+d.x*44,z2:z+d.z*44};
+      for(const o of alive){const v=DIRS[o.dir],length=Math.max(35,o.speed*2),lane={x1:o.x,z1:o.z,x2:o.x+v.x*length,z2:o.z+v.z*length};
+        if(spawnRay(x,z,dir,[lane])<=44||pointSegDistance(x,z,lane)<6.5||pointSegDistance(runway.x2,runway.z2,lane)<6.5||pointSegDistance(o.x,o.z,runway)<6.5||pointSegDistance(lane.x2,lane.z2,runway)<6.5)return false
+      }return true
+    }
+    function certifiedSpawn(x,z,alive,walls){
+      const cycleGap=alive.reduce((m,o)=>Math.min(m,Math.hypot(x-o.x,z-o.z)),Infinity);if(cycleGap<12)return null;
+      const wallGap=walls.reduce((m,w)=>Math.min(m,pointSegDistance(x,z,w)),Infinity);if(wallGap<6)return null;
+      const directions=DIRS.map((_,dir)=>({dir,clear:spawnRay(x,z,dir,walls)})).sort((a,b)=>b.clear-a.clear);
+      for(const {dir,clear} of directions){if(clear<44||!spawnRunwaySafe(x,z,dir,alive))continue;
+        let exit=clear===Infinity;const d=DIRS[dir];
+        // A globally open ray reachable along the runway proves this is not a closed pocket.
+        for(const run of [18,32,42])if(!exit)for(const side of [(dir+1)%4,(dir+3)%4])if(spawnRay(x+d.x*run,z+d.z*run,side,walls)===Infinity){exit=true;break}
+        if(exit)return{x,z,dir,score:Math.min(clear,80)+Math.min(wallGap,24)+Math.min(cycleGap,32)*.3}
+      }return null
+    }
+    function chooseSafeSpawn(ignoreId,phase=0){
+      const center=largestClusterCenter(),alive=state.cycles.filter(o=>o.alive&&o.id!==ignoreId),walls=[...state.walls,...alive.filter(o=>o.invuln<=0).map(activeSegment)];
+      for(const radius of [24,36,52,76,110,160,235,340]){let best=null;
+        for(let i=0;i<20;i++){const a=i/20*Math.PI*2+phase+state.time*.071,p=certifiedSpawn(center.x+Math.cos(a)*radius,center.z+Math.sin(a)*radius,alive,walls);if(p&&(!best||p.score>best.score))best=p}
+        if(best)return best
+      }
+      // The plane is unbounded: verify an exterior position, never use an unchecked maze fallback.
+      let minX=center.x,maxX=center.x,minZ=center.z,maxZ=center.z;
+      for(const w of walls){minX=Math.min(minX,w.x1,w.x2);maxX=Math.max(maxX,w.x1,w.x2);minZ=Math.min(minZ,w.z1,w.z2);maxZ=Math.max(maxZ,w.z1,w.z2)}
+      for(const c of alive){minX=Math.min(minX,c.x);maxX=Math.max(maxX,c.x);minZ=Math.min(minZ,c.z);maxZ=Math.max(maxZ,c.z)}
+      const margin=cfg.maxSpeed*2+52,points=[[minX-margin,center.z],[maxX+margin,center.z],[center.x,minZ-margin],[center.x,maxZ+margin]].sort((a,b)=>Math.hypot(a[0]-center.x,a[1]-center.z)-Math.hypot(b[0]-center.x,b[1]-center.z));
+      for(const [x,z] of points){const p=certifiedSpawn(x,z,alive,walls);if(p)return p}return null
+    }
+    function safeRespawn(c){return chooseSafeSpawn(c.id)}
+    function respawnCycle(c){const p=safeRespawn(c);if(!p){c.respawnAt=state.time+.5;return}Object.assign(c,{x:p.x,z:p.z,tx:p.x,tz:p.z,dir:p.dir,tdir:p.dir,speed:cfg.baseSpeed,brake:false,brakeEnergy:1,rubber:0,rubberWall:null,grind:0,alive:true,turnQueue:[],turnCooldown:0,life:c.life+1,trailX:p.x,trailZ:p.z,ignoreWall:0,junctionX:p.x,junctionZ:p.z,nextAI:1.1+Math.random()*1.4,respawnAt:0,invuln:1.15});if(c.id===state.localId)state.deathCam=null;state.leaderSig='';if(isHost&&state.mode==='host')state.needsSnapshot=true}
 
-    function syncAICount(target,broadcast=true){target=clamp(+target||0,0,6);state.aiCount=target;state.running=true;state.roundEnding=false;$('#resultWrap').classList.remove('open');const bots=state.cycles.filter(c=>c.ai);if(bots.length>target){const remove=new Set(bots.slice(target).map(c=>c.id));state.cycles=state.cycles.filter(c=>!remove.has(c.id));state.walls=state.walls.filter(w=>!remove.has(w.owner));state.wallRevision++}else for(let i=bots.length;i<target;i++){const p=safeBotSpawn(i),id=state.nextCycle++;state.cycles.push(makeCycle(id,['NOVA','VOLT','ECHO','FLUX','ION','PRISM'][i],COLORS[(i+2)%COLORS.length],p.x,p.z,p.dir,false,true))}state.leaderSig='';if(broadcast&&isHost&&state.mode==='host')sendInit()}
-    function goMenu(){state.running=false;state.mode='menu';state.cycles=[];state.walls=[];resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;setOnlineLoading(false);document.body.classList.remove('playing');$('#resultWrap').classList.remove('open');closeNetwork();setRulesOpen(false);hostPeers.clear();if(autoRoom)try{autoRoom.leave()}catch{}autoRoom=autoAction=null;autoHostPeer='';autoIsPublic=false;publicJoinMode='';closePublicDirectory();clearCurrentInvite();applyLocalPreferences();$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true}
+    function syncAICount(target,broadcast=true){target=clamp(+target||0,0,6);state.aiCount=target;state.running=true;state.roundEnding=false;$('#resultWrap').classList.remove('open');const bots=state.cycles.filter(c=>c.ai);if(bots.length>target){const remove=new Set(bots.slice(target).map(c=>c.id));state.cycles=state.cycles.filter(c=>!remove.has(c.id));state.walls=state.walls.filter(w=>!remove.has(w.owner));state.wallRevision++}else for(let i=bots.length;i<target;i++){const p=safeBotSpawn(i),id=state.nextCycle++;if(!p)continue;state.cycles.push(makeCycle(id,['NOVA','VOLT','ECHO','FLUX','ION','PRISM'][i],COLORS[(i+2)%COLORS.length],p.x,p.z,p.dir,false,true))}state.leaderSig='';if(broadcast&&isHost&&state.mode==='host')sendInit()}
+    function goMenu(){advertisePublicRoom(null,false);roomGeneration++;state.running=false;state.mode='menu';state.cycles=[];state.walls=[];resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;setOnlineLoading(false);document.body.classList.remove('playing');$('#resultWrap').classList.remove('open');closeNetwork();setRulesOpen(false);hostPeers.clear();if(autoRoom)try{autoRoom.leave()}catch{}autoRoom=autoAction=null;autoHostPeer='';autoIsPublic=false;publicJoinMode='';closePublicDirectory();clearCurrentInvite();applyLocalPreferences();$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true}
 
     function activeSegment(c){const immune=c.invuln>0;return{x1:immune?c.x:c.trailX,z1:immune?c.z:c.trailZ,x2:c.x,z2:c.z,owner:c.id,color:c.color,life:c.life,active:true}}
     function finalizedWall(c,inputSeq=0,prediction=false){
@@ -427,8 +506,13 @@
       for(const w of state.walls)if(visibleWall(w))wallGeom(w,{x:fx,z:fz});for(const w of predictedWalls)wallGeom(w,{x:fx,z:fz});for(const c of riders)if(c.alive)wallGeom(activeSegment(c),{x:fx,z:fz});for(const c of riders)bike(c);for(const p of state.particles)V(ptsP,ptsC,[p.x,p.y,p.z],[p.color[0],p.color[1],p.color[2],clamp(p.life*2,0,1)]);
       gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.008,.012,.018,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.useProgram(program);const proj=matPerspective(Math.PI/3.2,canvas.width/canvas.height,.08,360),view=matLook([cam.x+sx,cam.y,cam.z+sz],[cam.tx,cam.ty,cam.tz]),vp=matMul(proj,view);gl.uniformMatrix4fv(loc.vp,false,vp);gl.uniform3f(loc.cam,cam.x,cam.y,cam.z);drawBatch(gl.TRIANGLES,trisP,trisC);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);gl.lineWidth(1);drawBatch(gl.LINES,linesP,linesC);drawBatch(gl.POINTS,ptsP,ptsC,7*(devicePixelRatio||1));gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA)}
     function resize(){const d=Math.min(2,devicePixelRatio||1),w=Math.floor(innerWidth*d),h=Math.floor(innerHeight*d);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}}
-    function loop(now){const raw=Math.min(.1,(now-state.last)/1000);state.last=now;if(state.mode==='guest'){updateGuest(raw,now);state.accum=0}else{state.accum+=raw;while(state.accum>=SIM_DT){step(SIM_DT);state.accum-=SIM_DT}}const local=localCycle();audio.update(local);updateHUD();render(raw);requestAnimationFrame(loop)}requestAnimationFrame(loop);
-
+    function advanceGameClock(now){
+      const elapsed=Math.max(0,Math.min(.25,(now-state.simLast)/1000));state.simLast=now;
+      if(document.hidden&&state.mode!=='host')return;
+      if(state.mode==='guest'){updateGuest(elapsed,now);state.accum=0}
+      else{state.accum+=elapsed;while(state.accum>=SIM_DT){step(SIM_DT);state.accum-=SIM_DT}}
+    }
+    function loop(now){const raw=Math.min(.1,(now-state.last)/1000);state.last=now;advanceGameClock(now);const local=localCycle();audio.update(local);updateHUD();render(raw);requestAnimationFrame(loop)}requestAnimationFrame(loop);
 
     function drawMiniBike(canvas,color,alive){const ctx=canvas.getContext('2d'),w=canvas.width=80,h=canvas.height=36;ctx.clearRect(0,0,w,h);ctx.globalAlpha=alive?1:.42;ctx.strokeStyle=color;ctx.fillStyle=color;ctx.shadowColor=color;ctx.shadowBlur=8;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(3,27);ctx.lineTo(33,27);ctx.stroke();for(const x of [38,65]){ctx.beginPath();ctx.arc(x,25,7,0,Math.PI*2);ctx.stroke()}ctx.beginPath();ctx.moveTo(31,24);ctx.lineTo(43,12);ctx.lineTo(61,13);ctx.lineTo(69,23);ctx.lineTo(45,22);ctx.closePath();ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#061017';ctx.fillRect(46,13,11,4)}
     function renderMinimap(focus){const now=performance.now();if(now<minimapAt)return;minimapAt=now+90;const cv=$('#minimap'),rect=cv.getBoundingClientRect(),d=Math.min(2,devicePixelRatio||1),w=Math.max(1,Math.round(rect.width)),h=Math.max(1,Math.round(rect.height)),pw=Math.round(w*d),ph=Math.round(h*d);if(cv.width!==pw||cv.height!==ph){cv.width=pw;cv.height=ph}const ctx=cv.getContext('2d');ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);ctx.fillStyle='rgba(2,7,10,.92)';ctx.fillRect(0,0,w,h);const range=115,scale=Math.min(w,h)/(range*2),px=x=>w*.5+(x-focus.x)*scale,py=z=>h*.5+(z-focus.z)*scale;ctx.lineWidth=1;for(let x=Math.ceil((focus.x-range)/10)*10;x<=focus.x+range;x+=10){ctx.strokeStyle=Math.abs(x%50)<.01?'rgba(49,236,255,.22)':'rgba(49,236,255,.08)';ctx.beginPath();ctx.moveTo(px(x),0);ctx.lineTo(px(x),h);ctx.stroke()}for(let z=Math.ceil((focus.z-range)/10)*10;z<=focus.z+range;z+=10){ctx.strokeStyle=Math.abs(z%50)<.01?'rgba(49,236,255,.22)':'rgba(49,236,255,.08)';ctx.beginPath();ctx.moveTo(0,py(z));ctx.lineTo(w,py(z));ctx.stroke()}const riders=displayCycles(now),trails=[...state.walls.filter(visibleWall),...predictedWalls,...riders.filter(c=>c.alive).map(activeSegment)];ctx.lineCap='butt';for(const wall of trails){if(Math.max(wall.x1,wall.x2)<focus.x-range||Math.min(wall.x1,wall.x2)>focus.x+range||Math.max(wall.z1,wall.z2)<focus.z-range||Math.min(wall.z1,wall.z2)>focus.z+range)continue;ctx.strokeStyle=wall.color;ctx.globalAlpha=wall.active ? .78 : .58;ctx.lineWidth=wall.owner===state.localId?1.35:1;ctx.beginPath();ctx.moveTo(px(wall.x1),py(wall.z1));ctx.lineTo(px(wall.x2),py(wall.z2));ctx.stroke()}ctx.globalAlpha=1;for(const c of riders){if(!c.alive||Math.abs(c.x-focus.x)>range||Math.abs(c.z-focus.z)>range)continue;const x=px(c.x),y=py(c.z),a=c.dir*Math.PI/2;ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.fillStyle=c.color;ctx.shadowColor=c.color;ctx.shadowBlur=c.id===state.localId?8:5;ctx.beginPath();ctx.moveTo(0,-5);ctx.lineTo(3.7,4);ctx.lineTo(0,2.4);ctx.lineTo(-3.7,4);ctx.closePath();ctx.fill();if(c.id===state.localId){ctx.shadowBlur=0;ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke()}ctx.restore()}ctx.shadowBlur=0;ctx.fillStyle='rgba(192,244,250,.72)';ctx.font='700 7px ui-monospace,monospace';ctx.fillText('230 U',7,h-7);ctx.fillStyle='#31ecff';ctx.textAlign='right';ctx.fillText('N',w-7,11);ctx.textAlign='left'}
@@ -460,22 +544,162 @@
     function clearCurrentInvite(){if(location.hash)history.replaceState(null,'',inviteBase());$('#shareBtn').disabled=true;publicInviteLink=privateInviteLink=''}
     function setPublicInvite(code){code=cleanRoom(code);publicInviteLink=code?setCurrentInvite(publicRoomLink(code)):'';return code}
     function setPrivateInvite(code){code=cleanRoom(code);privateInviteLink=code?setCurrentInvite(privateRoomLink(code)):'';return code}
+    let roomGeneration=0,directoryGeneration=0,directoryLoading=null,peerModulePromise=null,roomJoinedAt=0,roomReadyAt=0,joinDeadline=0,knownRoom=false,lastHostAt=0,hostTerm=0,matchStartedAt=0,firstDirectoryAt=-1,lastAdAt=0,lastProbeAt=0,lastPresenceAt=0,lastMaintenance=-Infinity,adSequence=0,lastRecoveryAt=0;
+    const peerStatus=new Map(),failedRooms=new Map();
+    function loadPeerModule(){return peerModulePromise||(peerModulePromise=import('https://esm.run/trystero@0.25.3').catch(e=>{peerModulePromise=null;throw e}))}
+    function roomPeerIds(){return Object.keys(autoRoom?.getPeers?.()||{})}
     function sendDirectory(obj,target=null){if(!directoryAction)return;directoryAction.send(obj,target?{target}:undefined).catch(()=>{})}
     function publicSlots(){return Math.max(0,state.maxHumans-(1+hostPeers.size))}
-    function advertisePublicRoom(target=null){if(!autoIsPublic||!isHost||!autoRoomId||!directoryAction)return;const humans=1+hostPeers.size;sendDirectory({t:'ad',room:autoRoomId,humans,players:humans,max:state.maxHumans,open:publicSlots()},target)}
+    function advertisePublicRoom(target=null,available=!document.hidden&&state.running){
+      if(!autoIsPublic||!isHost||!autoRoomId||!directoryAction)return;const humans=1+hostPeers.size;lastAdAt=performance.now();
+      sendDirectory({t:'ad',protocol:NET_PROTOCOL,room:autoRoomId,humans,players:humans,max:state.maxHumans,open:publicSlots(),available:!!available,term:hostTerm,seq:++adSequence},target)
+    }
     function clearPublicProbes(){for(const timer of publicProbeTimers)clearTimeout(timer);publicProbeTimers=[]}
-    function closePublicDirectory(){clearInterval(directoryTimer);clearTimeout(publicMatchTimer);clearPublicProbes();directoryTimer=publicMatchTimer=0;publicMatchPending=false;publicCandidates.clear();if(directoryRoom)try{directoryRoom.leave()}catch{}directoryRoom=directoryAction=null}
-    function finishPublicMatch(){if(!publicMatchPending)return;publicMatchPending=false;clearTimeout(publicMatchTimer);clearPublicProbes();publicMatchTimer=0;const best=[...publicCandidates.values()].filter(x=>x.open>0).sort((a,b)=>b.humans-a.humans||a.open-b.open||a.room.localeCompare(b.room))[0];publicCandidates.clear();if(best){setPublicInvite(best.room);setConn(`Joining the busiest room · ${best.humans}/${best.max} humans…`);closePublicDirectory();publicJoinMode='match';joinAutoRoom(best.room,true)}else{const code=setPublicInvite('PUB-'+randomRoomPart(6));setConn('No open room · creating one…');joinAutoRoom(code,true)}}
-    function handleDirectoryMessage(m,peerId){if(!m||typeof m!=='object')return;if(m.t==='find'){if(autoIsPublic&&isHost&&publicSlots()>0)advertisePublicRoom(peerId);return}if(m.t==='ad'&&publicMatchPending&&+m.open>0){const room=cleanRoom(m.room);if(!room)return;const max=clamp(Math.floor(+m.max||2),2,6),humans=clamp(Math.floor(+(m.humans??m.players)||1),1,max),open=clamp(Math.floor(+m.open||0),0,max-humans);if(open>0)publicCandidates.set(room,{room,humans,max,open})}}
-    async function ensurePublicDirectory(){if(directoryRoom)return;const mod=await import('https://esm.run/trystero@0.25.3'),config={appId:'grid-infinito-lightcycles-v5',rtcConfig};directoryRoom=mod.joinRoom(config,'GRID-INFINITY-PUBLIC-DIRECTORY-V2',{onJoinError:()=>setConn('Public directory unavailable · creating a room')});directoryAction=directoryRoom.makeAction('rooms-v1');directoryAction.onMessage=(data,{peerId})=>handleDirectoryMessage(data,peerId);directoryRoom.onPeerJoin=peerId=>{if(publicMatchPending)sendDirectory({t:'find'},peerId);if(autoIsPublic&&isHost&&publicSlots()>0)advertisePublicRoom(peerId)}}
-    async function startPublicAdvertising(){try{await ensurePublicDirectory();advertisePublicRoom();clearInterval(directoryTimer);directoryTimer=setInterval(()=>advertisePublicRoom(),1150)}catch{setConn('Room active · public directory unavailable')}}
-    async function matchPublicRoom(){setOnlineLoading(true);publicJoinMode='match';clearTimeout(publicMatchTimer);clearPublicProbes();publicCandidates.clear();publicMatchPending=true;setConn('Looking for the busiest open room…');try{await ensurePublicDirectory();if(!publicMatchPending)return;const probe=()=>{if(publicMatchPending)sendDirectory({t:'find'})};probe();for(const delay of [550,1300,2200])publicProbeTimers.push(setTimeout(probe,delay));publicMatchTimer=setTimeout(finishPublicMatch,3200)}catch{publicMatchPending=false;clearPublicProbes();publicCandidates.clear();const code=setPublicInvite('PUB-'+randomRoomPart(6));joinAutoRoom(code,true)}}
+    function stopPublicSearch(){clearTimeout(publicMatchTimer);clearPublicProbes();publicMatchTimer=0;publicMatchPending=false}
+    function closePublicDirectory(){
+      directoryGeneration++;directoryLoading=null;clearInterval(directoryTimer);directoryTimer=0;stopPublicSearch();publicCandidates.clear();
+      if(directoryRoom)try{directoryRoom.leave()}catch{}directoryRoom=directoryAction=null
+    }
+    function rankedPublicRooms(now=performance.now()){
+      for(const [room,ad] of publicCandidates)if(now-ad.seen>12000)publicCandidates.delete(room);
+      return [...publicCandidates.values()].filter(ad=>ad.available&&ad.open>0&&ad.room!==autoRoomId&&(failedRooms.get(ad.room)||0)<=now).sort((a,b)=>b.humans-a.humans||a.open-b.open||a.room.localeCompare(b.room))
+    }
+    function joinPublicCandidate(best){stopPublicSearch();publicJoinMode='match';showToast('Riders found · joining their grid');setConn('Joining '+best.humans+'/'+best.max+' humans…');joinAutoRoom(best.room,true,{expected:true})}
+    function finishPublicMatch(now=performance.now()){
+      if(!publicMatchPending||document.hidden)return;const best=rankedPublicRooms(now)[0],elapsed=now-matchStartedAt;
+      if(best&&elapsed>=900&&firstDirectoryAt>=0&&now-firstDirectoryAt>=700){joinPublicCandidate(best);return}
+      if(elapsed<8000)return;stopPublicSearch();publicJoinMode='match';setConn('Opening a grid · still looking for riders…');joinAutoRoom('PUB-'+randomRoomPart(6),true,{create:true})
+    }
+    function consolidatePublicRoom(now=performance.now()){
+      if(document.hidden||publicMatchPending||!isHost||!autoIsPublic||publicJoinMode!=='match'||hostPeers.size||roomPeerIds().length||now-roomReadyAt<2500)return;
+      const best=rankedPublicRooms(now).find(ad=>now-ad.seen<4500&&(ad.humans>1||ad.room.localeCompare(autoRoomId)<0));
+      if(best)joinPublicCandidate(best)
+    }
+    function handleDirectoryMessage(m,peerId){
+      if(!m||typeof m!=='object')return;
+      if(m.t==='find'){advertisePublicRoom(peerId);return}
+      if(m.t!=='ad'||m.protocol!==NET_PROTOCOL)return;const room=cleanRoom(m.room);if(!room||!room.startsWith('PUB-'))return;
+      const old=publicCandidates.get(room),term=Number.isSafeInteger(m.term)?m.term:0;
+      if(old&&performance.now()-old.seen<=12000&&(term<old.term||(old.peerId===peerId&&term===old.term&&m.seq<=old.seq)))return;
+      if(m.available===false){if(!old||old.peerId===peerId||term>old.term)publicCandidates.delete(room);return}
+      const max=clamp(Math.floor(+m.max||2),2,6),humans=clamp(Math.floor(+(m.humans??m.players)||1),1,max),open=clamp(Math.floor(+m.open||0),0,max-humans),now=performance.now();
+      publicCandidates.set(room,{room,humans,max,open,available:true,peerId,term,seq:m.seq||0,seen:now});if(publicMatchPending&&firstDirectoryAt<0)firstDirectoryAt=now
+    }
+    async function ensurePublicDirectory(){
+      if(directoryRoom)return directoryRoom;if(directoryLoading)return directoryLoading;const generation=directoryGeneration;
+      const pending=(async()=>{
+        const mod=await loadPeerModule();if(generation!==directoryGeneration)return null;
+        const room=mod.joinRoom({appId:'grid-infinito-lightcycles-v6',rtcConfig},'GRID-INFINITY-PUBLIC-DIRECTORY-V3',{onJoinError:()=>{if(generation===directoryGeneration)setConn('Discovery reconnecting…')}});
+        directoryRoom=room;directoryAction=room.makeAction('rooms-v2');const valid=()=>generation===directoryGeneration&&directoryRoom===room;
+        directoryAction.onMessage=(data,{peerId})=>{if(valid())handleDirectoryMessage(data,peerId)};
+        room.onPeerJoin=peerId=>{if(!valid())return;if(firstDirectoryAt<0)firstDirectoryAt=performance.now();sendDirectory({t:'find'},peerId);advertisePublicRoom(peerId)};
+        room.onPeerLeave=peerId=>{if(valid())for(const [id,ad] of publicCandidates)if(ad.peerId===peerId)publicCandidates.delete(id)};
+        return room
+      })();directoryLoading=pending;try{return await pending}finally{if(directoryLoading===pending)directoryLoading=null}
+    }
+    async function startPublicAdvertising(){try{await ensurePublicDirectory();advertisePublicRoom();sendDirectory({t:'find'})}catch{setConn('Room active · discovery reconnecting')}}
+    async function matchPublicRoom(){
+      if(publicMatchPending)return;setOnlineLoading(true);publicJoinMode='match';publicMatchPending=true;matchStartedAt=performance.now();firstDirectoryAt=-1;lastProbeAt=-Infinity;setConn('Finding active riders…');
+      try{await ensurePublicDirectory();if(publicMatchPending){sendDirectory({t:'find'});finishPublicMatch()}}catch{if(publicMatchPending){stopPublicSearch();setOnlineLoading(false);setConn('Discovery unavailable · try Find match again')}}
+    }
     function autoPeerByNetwork(peerId){return[...hostPeers.values()].find(p=>p.peerId===peerId)}
-    function becomeAutoGuest(host){clearTimeout(autoConnectTimer);if(host===autoSelf||(host===autoHostPeer&&state.mode==='guest'&&state.running))return;autoHostPeer=host;isHost=false;state.mode='guest';state.running=false;resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;closePublicDirectory();setConn('Host found · syncing grid…');netSend({t:'hello',name:cleanName($('#playerName').value)})}
-    function becomeAutoHost(){if(autoHostPeer&&autoHostPeer!==autoSelf)return;clearTimeout(autoConnectTimer);autoHostPeer=autoSelf;isHost=true;hostPeers.clear();beginHostRoom();setOnlineLoading(false);state.roomId=autoRoomId;closeNetwork();setConn('Room active · you are the host');netSend({t:'host',host:autoSelf});if(autoIsPublic)startPublicAdvertising();showToast('Room active · invite link ready')}
-    function removeAutoPeer(peerId){snapshotOutbox.delete(peerId);const p=autoPeerByNetwork(peerId);if(!p)return;hostPeers.delete(p.id);state.walls=state.walls.filter(w=>w.owner!==p.id);state.wallRevision++;state.cycles=state.cycles.filter(c=>c.id!==p.id);state.leaderSig='';announcePresence('leave',p);sendInit();advertisePublicRoom()}
-    function handleAutoMessage(m,peerId){if(!m||typeof m!=='object')return;if(m.t==='host'){if(isHost){if(String(m.host)<String(autoSelf))becomeAutoGuest(m.host);else netSend({t:'host',host:autoSelf},peerId)}else becomeAutoGuest(m.host);return}if(m.t==='full'&&!isHost){showToast('This room is full');if(autoRoom)try{autoRoom.leave()}catch{}autoRoom=autoAction=null;autoHostPeer='';if(autoIsPublic&&publicJoinMode==='match'){setConn('Room filled up · looking for another…');setTimeout(matchPublicRoom,350)}else{setOnlineLoading(false);setConn('Room full')}return}if(isHost){let peer=autoPeerByNetwork(peerId);if(m.t==='hello'&&!peer){const id=freeHumanId();if(id==null){netSend({t:'full'},peerId);return}peer={id,peerId,name:cleanName(m.name||('RIDER '+id)),auto:true};hostPeers.set(id,peer);const p=safeBotSpawn(id+3);state.cycles.push(makeCycle(id,peer.name,COLORS[id%COLORS.length],p.x,p.z,p.dir,true,false));state.leaderSig='';announcePresence('join',peer);sendInit(peer);advertisePublicRoom();return}if(peer)handleNet(m,peer)}else{if(!autoHostPeer&&m.t==='init')autoHostPeer=peerId;if(peerId===autoHostPeer){handleNet(m,null);if(m.t==='init')closeNetwork()}}}
-    async function joinAutoRoom(roomId,isPublic=false){snapshotOutbox.clear();setOnlineLoading(true);state.running=false;state.mode='connecting';resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;try{if(autoRoom)try{autoRoom.leave()}catch{}clearTimeout(autoConnectTimer);hostPeers.clear();autoHostPeer='';isHost=false;autoIsPublic=!!isPublic;autoRoomId=cleanRoom(roomId)||(isPublic?'PUB-'+randomRoomPart(6):'PRI-'+randomRoomPart(10));state.roomId=autoRoomId;if(isPublic)setPublicInvite(autoRoomId);else closePublicDirectory();setConn('Looking for other riders…');const mod=await import('https://esm.run/trystero@0.25.3'),config={appId:'grid-infinito-lightcycles-v5',rtcConfig};autoSelf=mod.selfId;autoRoom=mod.joinRoom(config,autoRoomId,{onJoinError:()=>setConn('Direct connection failed on this network')});autoAction=autoRoom.makeAction('grid-v5');autoAction.onMessage=(data,{peerId})=>handleAutoMessage(data,peerId);autoRoom.onPeerJoin=peerId=>{if(isHost)netSend({t:'host',host:autoSelf},peerId);else netSend({t:'hello',name:cleanName($('#playerName').value)},peerId)};autoRoom.onPeerLeave=peerId=>{if(isHost)removeAutoPeer(peerId);else if(peerId===autoHostPeer){autoHostPeer='';state.running=false;resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;setConn('Host left · re-electing…');autoConnectTimer=setTimeout(()=>{const ids=[autoSelf,...Object.keys(autoRoom?.getPeers?.()||{})].sort();if(ids[0]===autoSelf)becomeAutoHost()},1300)}};autoConnectTimer=setTimeout(()=>{if(!autoHostPeer)becomeAutoHost()},1900);netSend({t:'probe',name:cleanName($('#playerName').value)})}catch(e){setOnlineLoading(false);setConn('Matchmaking unavailable: '+e.message)}}
+    function sendPresence(){if(!autoAction)return;lastPresenceAt=performance.now();autoAction.send({t:'presence',visible:!document.hidden}).catch(()=>{})}
+    function becomeAutoGuest(host,term=hostTerm){
+      clearTimeout(autoConnectTimer);if(host===autoSelf||(host===autoHostPeer&&term===hostTerm&&state.mode==='guest'&&state.running))return;
+      autoHostPeer=host;hostTerm=term;isHost=false;lastHostAt=performance.now();state.mode='guest';state.running=false;resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;
+      setConn('Host found · syncing grid…');netSend({t:'hello',name:cleanName($('#playerName').value)})
+    }
+    function becomeAutoHost(){
+      if(autoHostPeer&&autoHostPeer!==autoSelf)return;if(isHost&&state.mode==='host'&&state.running)return;
+      const roomOptions=state.mode==='guest'&&state.cycles.length?{aiCount:state.aiCount,maxHumans:state.maxHumans,clearTrailsOnCrash:state.clearTrailsOnCrash}:null;
+      clearTimeout(autoConnectTimer);autoHostPeer=autoSelf;isHost=true;hostPeers.clear();roomReadyAt=lastHostAt=performance.now();beginHostRoom(roomOptions);setOnlineLoading(false);state.roomId=autoRoomId;closeNetwork();setConn('Room active · you are the host');
+      netSend({t:'host',host:autoSelf,term:hostTerm});sendPresence();if(autoIsPublic)startPublicAdvertising();showToast('Room active · invite link ready')
+    }
+    function visibleSuccessor(now=performance.now()){
+      return roomPeerIds().filter(id=>(!isHost||autoPeerByNetwork(id))&&id!==autoHostPeer&&peerStatus.get(id)?.visible&&now-peerStatus.get(id).seen<6000).sort()[0]
+    }
+    function handoffHiddenHost(){
+      if(!isHost||!document.hidden)return false;const next=visibleSuccessor();if(!next)return false;
+      const term=hostTerm+1;advertisePublicRoom();netSend({t:'handoff',host:next,term});becomeAutoGuest(next,term);return true
+    }
+    function removeAutoPeer(peerId){snapshotOutbox.delete(peerId);peerStatus.delete(peerId);const p=autoPeerByNetwork(peerId);if(!p)return;hostPeers.delete(p.id);state.walls=state.walls.filter(w=>w.owner!==p.id);state.wallRevision++;state.cycles=state.cycles.filter(c=>c.id!==p.id);state.leaderSig='';announcePresence('leave',p);sendInit();advertisePublicRoom()}
+    function handleAutoMessage(m,peerId){
+      if(!m||typeof m!=='object')return;
+      if(m.t==='presence'){peerStatus.set(peerId,{visible:m.visible!==false,seen:performance.now()});handoffHiddenHost();return}
+      if(m.t==='handoff'){
+        if(peerId!==autoHostPeer||!Number.isSafeInteger(m.term)||m.term<=hostTerm||!(m.host===autoSelf||roomPeerIds().includes(m.host)))return;
+        hostTerm=m.term;if(m.host===autoSelf){autoHostPeer=autoSelf;becomeAutoHost()}else becomeAutoGuest(m.host,m.term);return
+      }
+      if(m.t==='host'){
+        if(m.host!==peerId||!Number.isSafeInteger(m.term)||m.term<hostTerm)return;
+        if(m.term===hostTerm&&autoHostPeer&&autoHostPeer!==m.host&&String(autoHostPeer)<String(m.host)){if(isHost)netSend({t:'host',host:autoSelf,term:hostTerm},peerId);return}
+        lastHostAt=performance.now();becomeAutoGuest(m.host,m.term);return
+      }
+      if(m.t==='probe'){if(isHost)netSend({t:'host',host:autoSelf,term:hostTerm},peerId);sendPresence();return}
+      if(m.t==='full'&&!isHost){
+        if(peerId!==autoHostPeer)return;failedRooms.set(autoRoomId,performance.now()+20000);showToast('Room full · finding another grid');
+        if(autoIsPublic&&publicJoinMode==='match')retryPublicJoin();else{roomGeneration++;if(autoRoom)try{autoRoom.leave()}catch{}autoRoom=autoAction=null;autoHostPeer='';state.running=false;state.mode='connecting';setOnlineLoading(false);setConn('Room full · try again later')}return
+      }
+      if(isHost){
+        advanceGameClock(performance.now());let peer=autoPeerByNetwork(peerId);
+        if(m.t==='hello'&&!peer){
+          const id=freeHumanId();if(id==null){netSend({t:'full'},peerId);return}
+          const p=safeBotSpawn(id+3);if(!p){netSend({t:'full'},peerId);return}
+          peer={id,peerId,name:cleanName(m.name||('RIDER '+id)),auto:true};hostPeers.set(id,peer);
+          const cycle=makeCycle(id,peer.name,COLORS[id%COLORS.length],p.x,p.z,p.dir,true,false);cycle.invuln=1.15;state.cycles.push(cycle);state.leaderSig='';announcePresence('join',peer);sendInit();advertisePublicRoom();sendPresence();return
+        }
+        if(peer)handleNet(m,peer)
+      }else if(peerId===autoHostPeer){if(m.t==='snap'||m.t==='init')lastHostAt=performance.now();handleNet(m,null);if(m.t==='init')closeNetwork()}
+    }
+    function retryPublicJoin(){
+      failedRooms.set(autoRoomId,performance.now()+20000);roomGeneration++;if(autoRoom)try{autoRoom.leave()}catch{}autoRoom=autoAction=null;autoHostPeer='';isHost=false;state.running=false;state.mode='connecting';stopPublicSearch();matchPublicRoom()
+    }
+    async function joinAutoRoom(roomId,isPublic=false,options={}){
+      advertisePublicRoom(null,false);const generation=++roomGeneration;stopPublicSearch();snapshotOutbox.clear();setOnlineLoading(true);state.running=false;state.mode='connecting';resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;
+      if(autoRoom)try{autoRoom.leave()}catch{}autoRoom=autoAction=null;clearTimeout(autoConnectTimer);hostPeers.clear();peerStatus.clear();autoHostPeer='';hostTerm=0;isHost=false;autoIsPublic=!!isPublic;
+      autoRoomId=cleanRoom(roomId)||(isPublic?'PUB-'+randomRoomPart(6):'PRI-'+randomRoomPart(10));state.roomId=autoRoomId;knownRoom=!!options.expected;roomJoinedAt=performance.now();joinDeadline=roomJoinedAt+(options.create?1400:knownRoom?8500:6500);lastPresenceAt=lastProbeAt=-Infinity;
+      if(isPublic)setPublicInvite(autoRoomId);else{closePublicDirectory();setPrivateInvite(autoRoomId)}setConn('Connecting to riders…');
+      try{
+        const mod=await loadPeerModule();if(generation!==roomGeneration)return;autoSelf=mod.selfId;roomJoinedAt=performance.now();joinDeadline=roomJoinedAt+(options.create?1400:knownRoom?8500:6500);
+        const room=mod.joinRoom({appId:'grid-infinito-lightcycles-v6',rtcConfig},autoRoomId,{onJoinError:()=>{if(generation===roomGeneration)setConn('Connection retrying…')}});
+        autoRoom=room;autoAction=room.makeAction('grid-v6');const valid=()=>generation===roomGeneration&&autoRoom===room;
+        autoAction.onMessage=(data,{peerId})=>{if(valid())handleAutoMessage(data,peerId)};
+        room.onPeerJoin=peerId=>{if(!valid())return;sendPresence();if(isHost)netSend({t:'host',host:autoSelf,term:hostTerm},peerId);else netSend({t:'probe'},peerId)};
+        room.onPeerLeave=peerId=>{if(!valid())return;peerStatus.delete(peerId);if(isHost)removeAutoPeer(peerId);else if(peerId===autoHostPeer){state.running=false;resetGuestPrediction();$('#chatBtn').disabled=true;lastHostAt=performance.now()-7000;setConn('Reconnecting to the room…')}};
+        netSend({t:'probe'});sendPresence();if(isPublic)startPublicAdvertising()
+      }catch(e){if(generation===roomGeneration){setOnlineLoading(false);setConn('Connection unavailable · try Find match again')}}
+    }
+    function networkMaintenance(now=performance.now()){
+      if(now-lastMaintenance<200)return;lastMaintenance=now;
+      if(directoryAction){
+        if(isHost&&now-lastAdAt>=1100)advertisePublicRoom();
+        if((publicMatchPending||(isHost&&autoIsPublic&&publicJoinMode==='match'&&!hostPeers.size))&&!document.hidden&&now-lastProbeAt>=900){lastProbeAt=now;sendDirectory({t:'find'})}
+        finishPublicMatch(now);consolidatePublicRoom(now)
+      }
+      if(!autoRoom||!autoAction)return;
+      if(now-lastPresenceAt>=1200)sendPresence();
+      if(isHost){handoffHiddenHost();return}
+      if(!autoHostPeer){
+        if(now-lastProbeAt>1000){lastProbeAt=now;netSend({t:'probe'})}
+        if(!document.hidden&&now>=joinDeadline){if(knownRoom&&publicJoinMode==='match')retryPublicJoin();else becomeAutoHost()}return
+      }
+      if(!state.running&&now-lastRecoveryAt>1200){lastRecoveryAt=now;netSend({t:'hello',name:cleanName($('#playerName').value)})}
+      if(document.hidden)return;
+      const silence=now-lastHostAt;
+      if(silence>3000&&now-lastRecoveryAt>1500){lastRecoveryAt=now;setConn('Host reconnecting…');netSend({t:'resync'});netSend({t:'probe'})}
+      if(silence>9000){
+        const successor=[autoSelf,...roomPeerIds().filter(id=>id!==autoHostPeer&&peerStatus.get(id)?.visible&&now-peerStatus.get(id).seen<6000)].sort()[0];
+        if(successor===autoSelf){hostTerm++;autoHostPeer=autoSelf;becomeAutoHost();showToast('Connection restored · new host')}
+      }
+    }
+    function recoverVisiblePage(){
+      const now=performance.now();state.simLast=now;state.accum=0;sendPresence();
+      if(document.hidden){advertisePublicRoom();handoffHiddenHost();return}
+      if(publicMatchPending){matchStartedAt=now;firstDirectoryAt=-1;lastProbeAt=-Infinity}
+      if(autoIsPublic){startPublicAdvertising();sendDirectory({t:'find'});lastProbeAt=now}
+      if(state.mode==='guest'&&autoHostPeer){resetGuestPrediction();lastHostAt=now;netSend({t:'resync'});netSend({t:'probe'})}
+      lastMaintenance=-Infinity;networkMaintenance(now)
+    }
     function setConn(s){$('#connState').textContent=s}
     function setOnlineLoading(loading){for(const id of ['#onlineBtn','#startOnlineSettings']){const b=$(id);if(!b)continue;b.classList.toggle('loading',!!loading);b.disabled=!!loading;b.setAttribute('aria-busy',String(!!loading))}}
     function freeHumanId(){for(let id=1;id<state.maxHumans;id++)if(!hostPeers.has(id))return id;return null}
@@ -557,7 +781,7 @@
 
 
     function selectedFlow(){return localStorage.getItem('grid-room-flow')==='private'?'private':'public'}function openNetwork(){audio.init();selectFlow(selectedFlow());setRulesOpen(true)}function closeNetwork(){setRulesOpen(false)}function selectFlow(name){localStorage.setItem('grid-room-flow',name);$$('.mode-switch button').forEach(x=>x.classList.toggle('active',x.dataset.flow===name));const b=$('#startOnlineSettings');if(b)b.textContent=name==='private'?'Create private room':'Find public match'}
-    function createPrivateRoom(){setOnlineLoading(true);const code=setPrivateInvite('PRI-'+randomRoomPart(10));publicJoinMode='';setConn('Creating a private room…');joinAutoRoom(code,false)}function startSelectedOnline(){audio.init();if(selectedFlow()==='private')createPrivateRoom();else matchPublicRoom()}
+    function createPrivateRoom(){setOnlineLoading(true);const code=setPrivateInvite('PRI-'+randomRoomPart(10));publicJoinMode='';setConn('Creating a private room…');joinAutoRoom(code,false,{create:true})}function startSelectedOnline(){audio.init();if(selectedFlow()==='private')createPrivateRoom();else matchPublicRoom()}
     $('#soloBtn').onclick=startSolo;$('#onlineBtn').onclick=startSelectedOnline;$('#matchBtn').onclick=()=>{selectFlow('public');showToast('Looking for a public match');matchPublicRoom()};$('#soundBtn').onclick=()=>audio.toggle();$('#cameraBtn').onclick=cycleCamera;$('#rosterBtn').onclick=()=>setRosterVisible($('#riderBoard').classList.contains('roster-hidden'));$('#chatBtn').onclick=()=>setChatOpen(!$('#chatCompose').classList.contains('open'));$('#musicToggle').onchange=e=>{audio.init();audio.setMusic(e.currentTarget.checked)};$('#startOnlineSettings').onclick=startSelectedOnline;
     const unlockAudio=()=>{if(!audio.muted&&(!audio.ctx||audio.ctx.state!=='running'||!audio.unlockCuePlayed))audio.init(true)};addEventListener('pointerdown',unlockAudio,{capture:true});addEventListener('keydown',unlockAudio,{capture:true});
     $('#playerName').addEventListener('change',e=>updateLocalName(e.currentTarget.value));
@@ -571,6 +795,8 @@
     $('#chatCompose').addEventListener('submit',e=>{e.preventDefault();sendChat($('#chatInput').value);setChatOpen(false)});$('#chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();sendChat(e.currentTarget.value);setChatOpen(false)}else if(e.key==='Escape'){e.preventDefault();e.stopPropagation();setChatOpen(false)}});
     addEventListener('keydown',e=>{const editing=/^(INPUT|TEXTAREA)$/.test(e.target?.tagName||'');if(editing)return;if(e.code==='KeyT'){e.preventDefault();setChatOpen(true);return}if(e.repeat&&!['Space','ArrowDown'].includes(e.code))return;if(['ArrowLeft','ArrowRight','ArrowDown','Space'].includes(e.code))e.preventDefault();if(e.code==='ArrowLeft'||e.code==='KeyA')playerAction('left');else if(e.code==='ArrowRight'||e.code==='KeyD')playerAction('right');else if(e.code==='ArrowDown'||e.code==='Space'||e.code==='KeyS')playerAction('brake',true);else if(e.code==='KeyC')cycleCamera();else if(e.code==='Escape')setRulesOpen(false)});addEventListener('keyup',e=>{if(e.code==='ArrowDown'||e.code==='Space'||e.code==='KeyS')playerAction('brake',false)});
     const touchBrakePointers=new Set;canvas.addEventListener('pointerdown',e=>{const touchDevice=matchMedia('(pointer:coarse)').matches||navigator.maxTouchPoints>0;if(!touchDevice||!document.body.classList.contains('playing')||$('#chatCompose').classList.contains('open'))return;e.preventDefault();const inBrakeBand=e.clientY>=innerHeight*.83,inBrakeCenter=Math.abs(e.clientX/innerWidth-.5)<=.19;if(inBrakeBand&&inBrakeCenter){touchBrakePointers.add(e.pointerId);canvas.setPointerCapture?.(e.pointerId);playerAction('brake',true)}else playerAction(e.clientX<innerWidth/2?'left':'right')});for(const ev of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(ev,e=>{if(touchBrakePointers.delete(e.pointerId)&&!touchBrakePointers.size)playerAction('brake',false)});
+    setInterval(()=>{if(document.hidden&&isHost)advanceGameClock(performance.now());networkMaintenance()},250);
+    document.addEventListener('visibilitychange',recoverVisiblePage);addEventListener('pageshow',recoverVisiblePage);addEventListener('online',recoverVisiblePage);
     addEventListener('contextmenu',e=>e.preventDefault());
     addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('#installBtn').hidden=false});$('#installBtn').onclick=async()=>{if(!installPrompt)return;await installPrompt.prompt();installPrompt=null;$('#installBtn').hidden=true};if('serviceWorker'in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('/sw.js').catch(()=>{});
     (()=>{const p=new URLSearchParams(location.hash.slice(1));if(p.get('auto')==='1'&&p.get('room')){const code=cleanRoom(p.get('room')),isPublic=p.get('public')==='1';openNetwork();if(isPublic){setPublicInvite(code);publicInviteLink=location.href;selectFlow('public');publicJoinMode='direct';setConn('Public invite found · joining automatically…');joinAutoRoom(code,true)}else{setPrivateInvite(code);privateInviteLink=location.href;selectFlow('private');publicJoinMode='';setConn('Private invite found · joining automatically…');joinAutoRoom(code,false)}}})();
