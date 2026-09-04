@@ -16,7 +16,7 @@
     *{box-sizing:border-box;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}html,body{width:100%;height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--ink)}
     button,input,textarea{font:inherit}button{touch-action:manipulation}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
     #game{position:fixed;inset:0;width:100%;height:100%;display:block;background:#05070a}
-    .shade{position:fixed;inset:0;z-index:2;pointer-events:none;box-shadow:inset 0 0 150px rgba(0,0,0,.86)}
+    .shade{position:fixed;inset:0;z-index:2;pointer-events:none;box-shadow:inset 0 0 70px rgba(0,0,0,.24)}
     .scan{position:fixed;inset:0;z-index:3;pointer-events:none;opacity:.11;background-size:100% 4px;background-image:linear-gradient(transparent 0,transparent 2px,rgba(255,255,255,.08) 3px,transparent 4px)}
     .topbar{position:fixed;z-index:8;left:0;right:0;top:0;padding:max(16px,env(safe-area-inset-top)) clamp(16px,2.3vw,32px) 0;display:flex;justify-content:flex-end;align-items:center;pointer-events:none}
     .brand{font-size:12px;letter-spacing:.32em;font-weight:850;text-shadow:0 0 18px #000}.brand span{color:var(--cyan)}
@@ -123,8 +123,8 @@
 
     const COLORS=['#31ecff','#ff3da8','#ffd84a','#76ff74','#9d7bff','#ff784f','#38ffbd','#ff69e1','#b9ff4d','#48a7ff','#ffb347','#d7f2ff'];
     const DIRS=[{x:0,z:-1},{x:1,z:0},{x:0,z:1},{x:-1,z:0}];
-    const cfg={baseSpeed:22.2,maxSpeed:82,minSpeed:7.5,turnFactor:.94,turnDelay:.008,wallNear:7.5,wallHeight:1.48,blastRadius:4.4};
-    const SIM_DT=1/60,NET_PROTOCOL=6;
+    const cfg={baseSpeed:22.2,maxSpeed:82,minSpeed:7.5,turnFactor:.94,coastDrag:.38,turnDelay:.008,wallNear:7.5,wallHeight:1.48,blastRadius:4.4};
+    const SIM_DT=1/60,NET_PROTOCOL=7;
 
     function storedInt(key,fallback,min,max){const n=Number.parseInt(localStorage.getItem(key),10);return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback}
     const state={mode:'menu',running:false,time:0,tick:0,wallRevision:0,needsSnapshot:false,round:0,roundEnding:false,cycles:[],walls:[],particles:[],scores:[],chat:[],nextWall:1,nextCycle:100,accum:0,simLast:performance.now(),last:performance.now(),sendClock:0,camMode:storedInt('grid-camera',0,0,2),localId:0,shake:0,aiCount:storedInt('grid-ai-count',3,0,6),maxHumans:storedInt('grid-max-humans',4,2,6),clearTrailsOnCrash:false,roomId:'',deathCam:null,leaderSig:'',leaderRenderAt:0};
@@ -143,7 +143,7 @@
     function packWall(w){return{id:w.id,owner:w.owner,x1:w.x1,z1:w.z1,x2:w.x2,z2:w.z2,color:w.color,born:w.born,expire:w.expire??null,inputSeq:w.inputSeq||0,life:w.life}}
 
 
-    const MUSIC_BPM=108,MUSIC_STEP=60/MUSIC_BPM/4;
+    const MUSIC_BPM=116,MUSIC_STEP=60/MUSIC_BPM/4;
     const MUSIC_CHORDS=[[52,55,59,66],[48,52,55,59],[45,48,52,59],[47,50,54,57]],MUSIC_ROOTS=[40,36,33,35];
     const MUSIC_MELODY=[
       [[0,71,5],[6,67,2],[10,66,3],[14,64,6],[24,67,3],[28,69,3]],
@@ -151,8 +151,13 @@
       [[0,69,5],[8,67,3],[12,64,6],[22,62,3],[26,64,5]],
       [[0,66,5],[8,69,3],[12,71,6],[22,69,3],[26,66,3],[30,67,2]]
     ];
+    function nearbyMotorMix(listener,cycles,viewRight=null,retained=new Set()){
+      if(!listener)return[];const forward=DIRS[listener.dir],length=viewRight?Math.hypot(viewRight.x,viewRight.z):0,right=length>.001?{x:viewRight.x/length,z:viewRight.z/length}:{x:-forward.z,z:forward.x};
+      const near=cycles.filter(c=>c.alive&&c.id!==listener.id).map(c=>{const dx=c.x-listener.x,dz=c.z-listener.z,distance=Math.hypot(dx,dz);return{cycle:c,distance,weight:Math.max(0,1-distance/110)**2/(1+distance/22),pan:clamp((dx*right.x+dz*right.z)/Math.max(12,distance*.8),-.85,.85)}}).filter(v=>v.distance<110).sort((a,b)=>(a.distance-(retained.has(a.cycle.id)?3:0))-(b.distance-(retained.has(b.cycle.id)?3:0))).slice(0,6);
+      const total=near.reduce((sum,v)=>sum+v.weight,0),scale=Math.min(1,.08/Math.max(.0001,.045*total));return near.map(v=>({...v,gain:.045*v.weight*scale}))
+    }
     class Soundscape{
-      constructor(){this.ctx=null;this.master=null;this.musicBus=null;this.engine=null;this.engineGain=null;this.whine=null;this.whineGain=null;this.filter=null;this.echo=null;this.musicTimer=0;this.step=0;this.nextNoteTime=0;this.musicStarted=false;this.unlockCuePlayed=false;this.muted=localStorage.getItem('grid-muted')==='1';this.musicEnabled=localStorage.getItem('grid-music')!=='0'}
+      constructor(){this.remotes=new Map();this.ctx=null;this.master=null;this.musicBus=null;this.engine=null;this.engineGain=null;this.whine=null;this.whineGain=null;this.filter=null;this.echo=null;this.musicTimer=0;this.step=0;this.nextNoteTime=0;this.musicStarted=false;this.unlockCuePlayed=false;this.muted=localStorage.getItem('grid-muted')==='1';this.musicEnabled=localStorage.getItem('grid-music')!=='0'}
       async init(cue=false){
         if(this.ctx){try{await this.ctx.resume()}catch{}this.onRunning(cue);return this.ctx.state==='running'}
         const A=window.AudioContext||window.webkitAudioContext;if(!A)return false;this.ctx=new A;
@@ -162,7 +167,7 @@
         // A separate restrained music space; motor echo never receives the score.
         this.musicSpace=this.ctx.createDelay(1);this.musicSpace.delayTime.value=60/MUSIC_BPM*.75;
         const musicFeedback=this.ctx.createGain(),musicReturn=this.ctx.createGain(),musicDamp=this.ctx.createBiquadFilter();
-        musicFeedback.gain.value=.2;musicReturn.gain.value=.15;musicDamp.type='lowpass';musicDamp.frequency.value=1750;
+        musicFeedback.gain.value=.16;musicReturn.gain.value=.11;musicDamp.type='lowpass';musicDamp.frequency.value=1750;
         this.musicSpace.connect(musicDamp);musicDamp.connect(musicFeedback).connect(this.musicSpace);musicDamp.connect(musicReturn).connect(this.musicBus);
         this.echo=this.ctx.createDelay(.8);this.echo.delayTime.value=.18;const feedback=this.ctx.createGain(),echoReturn=this.ctx.createGain();feedback.gain.value=.22;echoReturn.gain.value=.17;this.echo.connect(feedback).connect(this.echo);this.echo.connect(echoReturn).connect(this.master);
         this.filter=this.ctx.createBiquadFilter();this.filter.type='lowpass';this.filter.frequency.value=420;this.filter.Q.value=3;this.filter.connect(this.master);this.filter.connect(this.echo);
@@ -172,7 +177,28 @@
         this.musicTimer=setInterval(()=>this.music(),25);try{await this.ctx.resume()}catch{}this.onRunning(cue);return this.ctx.state==='running'
       }
       onRunning(cue=false){if(!this.ctx||this.ctx.state!=='running'||this.muted)return;if(this.musicEnabled){this.musicStarted=true;this.music()}if(cue&&!this.unlockCuePlayed){this.unlockCuePlayed=true;this.tone(220,.075,'triangle',.026)}}
-      update(c){if(!this.ctx)return;const t=this.ctx.currentTime;if(!c||!c.alive||state.mode==='menu'){this.engineGain?.gain.setTargetAtTime(0,t,.05);this.whineGain?.gain.setTargetAtTime(0,t,.05);return}const s=c.speed||cfg.baseSpeed;this.engineGain.gain.setTargetAtTime(.075,t,.05);this.whineGain.gain.setTargetAtTime(.022,t,.05);this.engine.frequency.setTargetAtTime(38+s*2.15,t,.06);this.whine.frequency.setTargetAtTime(90+s*8.2+(c.grind||0)*100,t,.08);this.filter.frequency.setTargetAtTime(260+s*23,t,.08)}
+      update(c,viewRight=null){if(!this.ctx)return;this.updateOthers(c,viewRight);const t=this.ctx.currentTime;if(!c||!c.alive||!state.running||!['solo','host','guest'].includes(state.mode)){this.engineGain?.gain.setTargetAtTime(0,t,.05);this.whineGain?.gain.setTargetAtTime(0,t,.05);return}const s=c.speed||cfg.baseSpeed;this.engineGain.gain.setTargetAtTime(.075,t,.05);this.whineGain.gain.setTargetAtTime(.022,t,.05);this.engine.frequency.setTargetAtTime(38+s*2.15,t,.06);this.whine.frequency.setTargetAtTime(90+s*8.2+(c.grind||0)*100,t,.08);this.filter.frequency.setTargetAtTime(260+s*23,t,.08)}
+      createOtherMotor(c){
+        const engine=this.ctx.createOscillator(),whine=this.ctx.createOscillator(),whineGain=this.ctx.createGain(),filter=this.ctx.createBiquadFilter(),gain=this.ctx.createGain(),pan=this.ctx.createStereoPanner?this.ctx.createStereoPanner():this.ctx.createGain();
+        engine.type='sawtooth';engine.detune.value=(c.id%7-3)*3;engine.frequency.value=38+c.speed*2.15;whine.type='triangle';whine.frequency.value=90+c.speed*8.2+(c.grind||0)*85;whineGain.gain.value=.18;filter.type='lowpass';filter.frequency.value=300+c.speed*20;filter.Q.value=.7;gain.gain.value=0;
+        engine.connect(filter);whine.connect(whineGain).connect(filter);filter.connect(gain).connect(pan);pan.connect(this.master);pan.connect(this.echo);engine.start();whine.start();
+        return{engine,whine,whineGain,filter,gain,pan}
+      }
+      retireOtherMotor(id,voice){
+        const t=this.ctx.currentTime;voice.gain.gain.setTargetAtTime(0,t,.045);voice.engine.stop(t+.2);voice.whine.stop(t+.2);
+        voice.engine.onended=()=>{for(const node of Object.values(voice))node.disconnect()};this.remotes.delete(id)
+      }
+      updateOthers(listener,viewRight=null){
+        if(this.ctx.state!=='running')return;
+        const targets=!this.muted&&state.running&&['solo','host','guest'].includes(state.mode)?nearbyMotorMix(listener,state.cycles,viewRight,new Set(this.remotes.keys())):[],wanted=new Set(targets.map(v=>v.cycle.id)),t=this.ctx.currentTime;
+        for(const [id,voice] of this.remotes)if(!wanted.has(id))this.retireOtherMotor(id,voice);
+        for(const {cycle:c,gain,pan} of targets){
+          let voice=this.remotes.get(c.id);if(!voice){voice=this.createOtherMotor(c);this.remotes.set(c.id,voice)}
+          voice.gain.gain.setTargetAtTime(gain,t,.075);voice.pan.pan?.setTargetAtTime(pan,t,.09);
+          voice.engine.frequency.setTargetAtTime(38+c.speed*2.15,t,.07);voice.whine.frequency.setTargetAtTime(90+c.speed*8.2+(c.grind||0)*85,t,.075);
+          voice.filter.frequency.setTargetAtTime(300+c.speed*20,t,.08)
+        }
+      }
       tone(freq=0,dur=.08,type='square',gain=.08){if(!this.ctx||this.muted)return;const t=this.ctx.currentTime,o=this.ctx.createOscillator(),g=this.ctx.createGain();o.type=type;o.frequency.setValueAtTime(freq,t);o.frequency.exponentialRampToValueAtTime(Math.max(20,freq*.82),t+dur);g.gain.setValueAtTime(gain,t);g.gain.exponentialRampToValueAtTime(.0001,t+dur);o.connect(g);g.connect(this.master);g.connect(this.echo);o.start(t);o.stop(t+dur+.02);o.onended=()=>{o.disconnect();g.disconnect()}}
       noise(dur=.35,gain=.13){if(!this.ctx||this.muted)return;const n=Math.floor(this.ctx.sampleRate*dur),b=this.ctx.createBuffer(1,n,this.ctx.sampleRate),d=b.getChannelData(0);for(let i=0;i<n;i++)d[i]=(Math.random()*2-1)*(1-i/n);const s=this.ctx.createBufferSource(),f=this.ctx.createBiquadFilter(),g=this.ctx.createGain();s.buffer=b;f.type='lowpass';f.frequency.value=900;g.gain.value=gain;s.connect(f).connect(g);g.connect(this.master);g.connect(this.echo);s.start();s.onended=()=>{s.disconnect();f.disconnect();g.disconnect()}}
       music(){
@@ -187,13 +213,21 @@
         if(cell%4===0)this.kick(t,soft ? .095 : .12);
         if(cell===4||cell===12)this.snare(t);
         if(cell%2===0)this.hat(t,cell===14?.085:.035,cell%4===2?.009:.005);
-        if(cell%2===0){const octave=[0,0,12,0,0,7,0,12][cell/2];this.note(hz(root+octave),MUSIC_STEP*1.65,.038,'sawtooth',520,0,t);this.note(hz(root),MUSIC_STEP*1.5,.016,'triangle',240,0,t)}
-        if(!soft||cell%2===0){const arp=[0,2,1,3,2,1,3,2][cell%8],f=hz(chord[arp]+12);this.note(f,MUSIC_STEP*.82,.0065,'triangle',1850,cell%2?-4:4,t)}
-        if(phrase===0)for(const midi of chord)for(const detune of [-5,5])this.note(hz(midi),MUSIC_STEP*31,.0048,'triangle',1150,detune,t,.38,true);
+        if(cell%2===0){const octave=[0,0,12,0,0,7,0,12][cell/2];this.note(hz(root+octave),MUSIC_STEP*1.45,.035,'sawtooth',1050,0,t);this.note(hz(root),MUSIC_STEP*1.35,.014,'triangle',240,0,t)}
+        if(!soft||cell%2===0){const arp=[0,2,1,3,2,1,3,2][cell%8],f=hz(chord[arp]+12);this.fmNote(f,MUSIC_STEP*.78,.009,t,2)}
+        if(phrase===0)for(const midi of chord)for(const detune of [-5,5])this.note(hz(midi),MUSIC_STEP*31,.0035,'triangle',920,detune,t,.38,true);
         for(const [at,midi,length] of MUSIC_MELODY[chordIndex])if(phrase===at){
-          const f=hz(midi+(section===3&&at>=24?12:0)),duration=MUSIC_STEP*length*.9,gain=soft ? .016 : .022;
-          this.note(f,duration,gain,'triangle',2200,-3,t,.045,true);this.note(f,duration,gain*.25,'sawtooth',1350,4,t,.055,true)
+          const f=hz(midi+(section===3&&at>=24?12:0)),duration=Math.min(.48,MUSIC_STEP*length*.65),gain=soft ? .014 : .02;
+          this.fmNote(f,duration,gain,t,1);this.note(f,duration,gain*.2,'square',1250,0,t,.012,true)
         }
+      }
+      fmNote(f,d,gain,t,ratio=2){
+        const carrier=this.ctx.createOscillator(),modulator=this.ctx.createOscillator(),depth=this.ctx.createGain(),level=this.ctx.createGain(),filter=this.ctx.createBiquadFilter();
+        carrier.type='sine';carrier.frequency.value=f;modulator.type='sine';modulator.frequency.value=f*ratio;
+        depth.gain.setValueAtTime(f*1.25,t);depth.gain.exponentialRampToValueAtTime(f*.06,t+d);modulator.connect(depth).connect(carrier.frequency);
+        filter.type='lowpass';filter.frequency.value=Math.min(4800,f*5);level.gain.setValueAtTime(.0001,t);level.gain.exponentialRampToValueAtTime(gain,t+.008);level.gain.exponentialRampToValueAtTime(.0001,t+d+.06);
+        carrier.connect(filter).connect(level).connect(this.musicBus);level.connect(this.musicSpace);
+        carrier.start(t);modulator.start(t);carrier.stop(t+d+.08);modulator.stop(t+d+.08);carrier.onended=()=>{carrier.disconnect();modulator.disconnect();depth.disconnect();level.disconnect();filter.disconnect()}
       }
       note(f,d,gain,type,cutoff=900,detune=0,t=this.ctx.currentTime,attack=.015,space=false){
         const o=this.ctx.createOscillator(),g=this.ctx.createGain(),filter=this.ctx.createBiquadFilter();o.type=type;o.frequency.value=f;o.detune.value=detune;filter.type='lowpass';filter.frequency.setValueAtTime(cutoff,t);filter.frequency.exponentialRampToValueAtTime(Math.max(180,cutoff*.6),t+d);
@@ -353,7 +387,7 @@
     function advanceCycle(c,dt,prediction=false){
       c.turnCooldown=Math.max(0,c.turnCooldown-dt);
       c.grind=c.invuln>0?0:sideGrind(c);
-      if(c.grind>0)c.speed=Math.min(cfg.maxSpeed,c.speed+c.grind*28*dt);else c.speed+=(cfg.baseSpeed-c.speed)*.68*dt;
+      if(c.grind>0)c.speed=Math.min(cfg.maxSpeed,c.speed+c.grind*28*dt);else c.speed+=(cfg.baseSpeed-c.speed)*(c.speed>cfg.baseSpeed&&!(c.brake&&c.brakeEnergy>0)?cfg.coastDrag:.68)*dt;
       if(c.brake&&c.brakeEnergy>0){c.speed=Math.max(cfg.minSpeed,c.speed-23*dt);c.brakeEnergy=Math.max(0,c.brakeEnergy-.38*dt)}else c.brakeEnergy=Math.min(1,c.brakeEnergy+.13*dt);
       let move=c.speed*dt;
       const immune=c.invuln>0,hit=immune?{distance:Infinity,owner:null,wallId:null}:rayHit(c,DIRS[c.dir],move),front=hit.distance;
@@ -467,8 +501,9 @@
     function showResult(winner){const won=winner&&winner.id===state.localId;$('#resultEyebrow').textContent=winner?'Round complete':'No survivors';$('#resultTitle').textContent=winner?(won?'You survived.':winner.name+' owns the grid.'):'Simultaneous collision.';$('#resultCopy').textContent=won?'You turned space into your weapon.':'The explosion gap stays open, but it is too late for you.';const a=state.scores[state.localId]||0,b=Math.max(...state.scores.filter((_,i)=>i!==state.localId),0);$('#resultScore').textContent=a+' — '+b;$('#resultWrap').classList.add('open');if(state.mode==='guest')$('#againBtn').textContent='Request rematch';else $('#againBtn').textContent='Again'}
 
     // WebGL renderer: small, dependency-free, and fully embedded in this file.
-    const vs=`attribute vec3 aPos;attribute vec4 aColor;uniform mat4 uVP;uniform float uPointSize;varying vec4 vColor;varying vec3 vWorld;void main(){vWorld=aPos;vColor=aColor;gl_Position=uVP*vec4(aPos,1.0);gl_PointSize=uPointSize;}`;
-    const fs=`precision mediump float;varying vec4 vColor;varying vec3 vWorld;uniform vec3 uCam;uniform float uPoints;void main(){float fog=smoothstep(105.0,215.0,distance(vWorld.xz,uCam.xz));vec3 col=mix(vColor.rgb,vec3(.012,.018,.025),fog);float a=vColor.a*(1.0-fog*.82);if(uPoints>.5){float q=length(gl_PointCoord-.5);a*=smoothstep(.5,.12,q);}gl_FragColor=vec4(col,a);}`;
+    const VIEW_RANGE={fogStart:280,fogEnd:620,grid:720,floor:900,near:.8,far:1400,wall:700,wallDetail:420,circuits:260};
+    const vs=`attribute vec3 aPos;attribute vec4 aColor;uniform mat4 uVP;uniform float uPointSize;uniform vec3 uCam;varying mediump vec4 vColor;varying mediump vec2 vFog;void main(){vFog=(aPos.xz-uCam.xz)/${VIEW_RANGE.fogEnd.toFixed(1)};vColor=aColor;gl_Position=uVP*vec4(aPos,1.0);gl_PointSize=uPointSize;}`;
+    const fs=`precision mediump float;varying mediump vec4 vColor;varying mediump vec2 vFog;uniform float uPoints;void main(){float fog=smoothstep(${(VIEW_RANGE.fogStart/VIEW_RANGE.fogEnd).toFixed(6)},1.0,length(vFog));vec3 col=mix(vColor.rgb,vec3(.012,.018,.025),fog);float a=vColor.a*(1.0-fog*.82);if(uPoints>.5){float q=length(gl_PointCoord-.5);a*=smoothstep(.5,.12,q);}gl_FragColor=vec4(col,a);}`;
     function shader(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
     const program=gl.createProgram();gl.attachShader(program,shader(gl.VERTEX_SHADER,vs));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,fs));gl.linkProgram(program);gl.useProgram(program);
     const loc={p:gl.getAttribLocation(program,'aPos'),c:gl.getAttribLocation(program,'aColor'),vp:gl.getUniformLocation(program,'uVP'),cam:gl.getUniformLocation(program,'uCam'),ps:gl.getUniformLocation(program,'uPointSize'),points:gl.getUniformLocation(program,'uPoints')};
@@ -478,7 +513,7 @@
     function quad(a,b,c,d,col){tri(a,b,c,col);tri(a,c,d,col)}
     function line(a,b,col){V(linesP,linesC,a,col);V(linesP,linesC,b,col)}
     function box(cx,cy,cz,sx,sy,sz,col,dir=0){const d=DIRS[dir],rx=-d.z,rz=d.x,pt=(lx,y,lz)=>[cx+rx*lx+d.x*lz,cy+y,cz+rz*lx+d.z*lz],x=sx/2,z=sz/2,y=sy/2,p=[pt(-x,-y,-z),pt(x,-y,-z),pt(x,y,-z),pt(-x,y,-z),pt(-x,-y,z),pt(x,-y,z),pt(x,y,z),pt(-x,y,z)];quad(p[0],p[1],p[2],p[3],col);quad(p[4],p[7],p[6],p[5],col);quad(p[0],p[4],p[5],p[1],col);quad(p[3],p[2],p[6],p[7],col);quad(p[1],p[5],p[6],p[2],col);quad(p[0],p[3],p[7],p[4],col)}
-    function wallGeom(w,focus){if(pointSegDistance(focus.x,focus.z,w)>210)return;let alpha=.5;if(w.expire!=null)alpha*=clamp((w.expire-state.time)/1.8,0,1);const co=hex(w.color,alpha),edge=hex(w.color,Math.min(1,alpha+.38)),a=[w.x1,0,w.z1],b=[w.x2,0,w.z2],c=[w.x2,cfg.wallHeight,w.z2],d=[w.x1,cfg.wallHeight,w.z1];quad(a,b,c,d,co);line(d,c,edge)}
+    function wallGeom(w,focus){const distance=pointSegDistance(focus.x,focus.z,w);if(distance>VIEW_RANGE.wall)return;let alpha=.5;if(w.expire!=null)alpha*=clamp((w.expire-state.time)/1.8,0,1);const co=hex(w.color,alpha),edge=hex(w.color,Math.min(1,alpha+.38)),a=[w.x1,0,w.z1],b=[w.x2,0,w.z2],c=[w.x2,cfg.wallHeight,w.z2],d=[w.x1,cfg.wallHeight,w.z1];if(distance<=VIEW_RANGE.wallDetail)quad(a,b,c,d,co);line(d,c,edge)}
     function bikeHull(c,col,dark){const d=DIRS[c.dir],r={x:-d.z,z:d.x},p=(x,y,z)=>[c.x+r.x*x+d.x*z,y,c.z+r.z*x+d.z*z],a=p(-.42,.42,-.82),b=p(.42,.42,-.82),cc=p(.34,.42,.98),dd=p(-.34,.42,.98),e=p(-.31,1.02,-.3),f=p(.31,1.02,-.3),g=p(.2,.86,.72),h=p(-.2,.86,.72);quad(a,b,f,e,dark);quad(dd,h,g,cc,dark);quad(a,e,h,dd,col);quad(b,cc,g,f,col);quad(e,f,g,h,hex(c.color,.72));quad(a,dd,cc,b,dark)}
     function aiBadge(c){const d=DIRS[c.dir],r={x:-d.z,z:d.x},p=(x,y,z)=>[c.x+r.x*x+d.x*z,y,c.z+r.z*x+d.z*z],z=-.335,ink=[1,.18,.7,1],plate=[.018,.025,.036,.94];box(c.x-d.x*.28,1.43,c.z-d.z*.28,1.08,.46,.1,plate,c.dir);for(const x of [-.43,.43])line(p(x,1.2,-.28),p(x,1.25,-.28),ink);line(p(-.44,1.25,z),p(-.29,1.62,z),ink);line(p(-.29,1.62,z),p(-.14,1.25,z),ink);line(p(-.38,1.41,z),p(-.2,1.41,z),ink);line(p(.1,1.62,z),p(.4,1.62,z),ink);line(p(.25,1.62,z),p(.25,1.25,z),ink);line(p(.1,1.25,z),p(.4,1.25,z),ink);const top=[p(0,1.68,-.58),p(.22,1.68,-.36),p(0,1.68,-.14),p(-.22,1.68,-.36)];for(let i=0;i<4;i++)line(top[i],top[(i+1)%4],ink)}
     function bike(c){if(!c.alive)return;const d=DIRS[c.dir],right={x:-d.z,z:d.x},dark=[.012,.022,.03,1],co=hex(c.color,.88),hi=hex(c.color,1),glass=[.035,.16,.2,.92];for(const f of [-1.05,1.08]){const cx=c.x+d.x*f,cz=c.z+d.z*f,r=.61;for(const side of [-.2,.2]){let prev=null;for(let i=0;i<=20;i++){const a=i/20*Math.PI*2,p=[cx+right.x*side+d.x*Math.cos(a)*r,.62+Math.sin(a)*r,cz+right.z*side+d.z*Math.cos(a)*r];if(prev)line(prev,p,hi);prev=p}}for(let i=0;i<4;i++){const a=i*Math.PI/2+.25,lineA=[cx+d.x*Math.cos(a)*r*.78,.62+Math.sin(a)*r*.78,cz+d.z*Math.cos(a)*r*.78],lineB=[cx-d.x*Math.cos(a)*r*.78,.62-Math.sin(a)*r*.78,cz-d.z*Math.cos(a)*r*.78];line(lineA,lineB,hex(c.color,.3))}box(cx,.62,cz,.44,.2,.2,dark,c.dir)}bikeHull(c,co,dark);box(c.x-d.x*.18,.98,c.z-d.z*.18,.7,.28,.68,glass,c.dir);box(c.x+d.x*.72,.66,c.z+d.z*.72,.62,.35,.76,co,c.dir);box(c.x-d.x*.7,.64,c.z-d.z*.7,.66,.28,.58,dark,c.dir);for(const side of [-.46,.46])line([c.x+right.x*side-d.x*.62,.72,c.z+right.z*side-d.z*.62],[c.x+right.x*side+d.x*.84,.72,c.z+right.z*side+d.z*.84],hi);line([c.x,1.13,c.z-d.z*.14],[c.x+d.x*1.58,.83,c.z+d.z*1.58],hi);if(c.ai)aiBadge(c);if(c.invuln>0){const pulse=.55+Math.sin(state.time*18)*.25;for(let i=0;i<4;i++){const a=i/4*Math.PI*2;line([c.x+Math.cos(a)*1.45,.08,c.z+Math.sin(a)*1.45],[c.x+Math.cos(a+.8)*1.45,.08,c.z+Math.sin(a+.8)*1.45],hex(c.color,pulse))}}const speedN=clamp((c.speed-cfg.minSpeed)/(cfg.maxSpeed-cfg.minSpeed),0,1),accelN=clamp(c.grind,0,1),power=clamp(.16+speedN*.58+accelN*.72,0,1),flameLen=(.55+speedN*1.35+accelN*1.75)*(.9+Math.sin(state.time*31+c.id*1.7)*.1);for(const side of [-.25,.25]){const bx=c.x+right.x*side-d.x*1.28,bz=c.z+right.z*side-d.z*1.28,tx=c.x+right.x*side-d.x*(1.28+flameLen),tz=c.z+right.z*side-d.z*(1.28+flameLen),spread=.13;tri([bx+right.x*spread,.5,bz+right.z*spread],[bx-right.x*spread,.5,bz-right.z*spread],[tx,.3,tz],hex(c.color,.28+power*.56));line([bx,.47,bz],[tx,.32,tz],[1,.68,.25,.5+power*.5])}}
@@ -488,12 +523,19 @@
     const cam={x:0,y:10,z:26,tx:0,ty:0,tz:0};
     function drawBatch(mode,p,c,point=1){if(!p.length)return;gl.bindBuffer(gl.ARRAY_BUFFER,pbuf);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(p),gl.DYNAMIC_DRAW);gl.enableVertexAttribArray(loc.p);gl.vertexAttribPointer(loc.p,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,cbuf);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(c),gl.DYNAMIC_DRAW);gl.enableVertexAttribArray(loc.c);gl.vertexAttribPointer(loc.c,4,gl.FLOAT,false,0,0);gl.uniform1f(loc.ps,point);gl.uniform1f(loc.points,mode===gl.POINTS?1:0);gl.drawArrays(mode,0,p.length/3)}
     function worldHash(x,z){let n=(x*374761393+z*668265263)^0x5bf03635;n=(n^(n>>>13))*1274126177;return(n^(n>>>16))>>>0}
+    function gridGeom(fx,fz){
+      const size=VIEW_RANGE.floor,range=VIEW_RANGE.grid,minX=Math.floor((fx-range)/10)*10,maxX=Math.ceil((fx+range)/10)*10,minZ=Math.floor((fz-range)/10)*10,maxZ=Math.ceil((fz+range)/10)*10;
+      quad([fx-size,0,fz-size],[fx+size,0,fz-size],[fx+size,0,fz+size],[fx-size,0,fz+size],[.009,.015,.021,1]);
+      for(let x=minX;x<=maxX;x+=10){const major=Math.abs(x%50)<.01,col=major?[.13,.68,.76,.62]:[.07,.42,.5,.36];line([x,.012,minZ],[x,.012,maxZ],col)}
+      for(let z=minZ;z<=maxZ;z+=10){const major=Math.abs(z%50)<.01,col=major?[.13,.68,.76,.62]:[.07,.42,.5,.36];line([minX,.012,z],[maxX,.012,z],col)}
+    }
     function boardGeom(fx,fz){
-      const tile=80,minTx=Math.floor((fx-170)/tile),maxTx=Math.floor((fx+170)/tile),minTz=Math.floor((fz-170)/tile),maxTz=Math.floor((fz+170)/tile),staticCol=[.07,.42,.5,.24],padCol=[.28,.12,.42,.18],t=state.mode==='menu'?performance.now()/1000:state.time;
+      const tile=80,range=VIEW_RANGE.circuits,minTx=Math.floor((fx-range)/tile),maxTx=Math.floor((fx+range)/tile),minTz=Math.floor((fz-range)/tile),maxTz=Math.floor((fz+range)/tile),t=state.mode==='menu'?performance.now()/1000:state.time;
       for(let tx=minTx;tx<=maxTx;tx++)for(let tz=minTz;tz<=maxTz;tz++){
+        const visibility=clamp((240-Math.hypot(tx*tile+40-fx,tz*tile+40-fz))/90,0,1);if(!visibility)continue;const staticCol=[.07,.42,.5,.24*visibility],padCol=[.28,.12,.42,.18*visibility];
         const h=worldHash(tx,tz),bx=tx*tile+9+(h%24),bz=tz*tile+9+((h>>>5)%24),a=18+((h>>>9)%16),sgn=(h&1)?1:-1,b=12+((h>>>13)%15),cc=15+((h>>>17)%17),total=a+b+cc,path=q=>q<a?{x:bx+q,z:bz,dx:1,dz:0}:q<a+b?{x:bx+a,z:bz+sgn*(q-a),dx:0,dz:sgn}:{x:bx+a+(q-a-b),z:bz+sgn*b,dx:1,dz:0};
         line([bx,.024,bz],[bx+a,.024,bz],staticCol);line([bx+a,.024,bz],[bx+a,.024,bz+sgn*b],staticCol);line([bx+a,.024,bz+sgn*b],[bx+a+cc,.024,bz+sgn*b],staticCol);
-        const span=(start,end,col)=>{while(start<0){start+=total;end+=total}while(start<end-.0001){const q=((start%total)+total)%total,bound=q<a?a:q<a+b?a+b:total,take=Math.min(end-start,bound-q);if(take<.0001){start+=.0001;continue}const p0=path(q),p1=path(q+take);line([p0.x,.046,p0.z],[p1.x,.046,p1.z],col);start+=take}};
+        const span=(start,end,col)=>{while(start<0){start+=total;end+=total}while(start<end-.0001){const q=((start%total)+total)%total,bound=q<a?a:q<a+b?a+b:total,take=Math.min(end-start,bound-q);if(take<.0001){start+=.0001;continue}const p0=path(q),p1=path(q+take);line([p0.x,.046,p0.z],[p1.x,.046,p1.z],[col[0],col[1],col[2],col[3]*visibility]);start+=take}};
         for(let j=0;j<2;j++){const q=(t*(30+(h%15))+(h%total)+j*total*.5)%total,len=3.2+((h>>>(j?8:3))&7)*.55,parts=6+((h>>>(j?21:18))&3);for(let i=0;i<parts;i++){const u0=q-len+len*i/parts,u1=q-len+len*(i+1)/parts,k=(i+1)/parts;span(u0,u1,[1,.025,.018,.07+.73*k*k])}span(q,q+.72,[1,.12,.055,.98]);span(q+.54,q+.82,[1,.72,.42,1])}
         const cx=bx-5,cz=bz+sgn*b-4,sx=8+((h>>>21)%5),sz=6+((h>>>24)%5);line([cx,.025,cz],[cx+sx,.025,cz],padCol);line([cx+sx,.025,cz],[cx+sx,.025,cz+sz],padCol);line([cx+sx,.025,cz+sz],[cx,.025,cz+sz],padCol);line([cx,.025,cz+sz],[cx,.025,cz],padCol)
       }
@@ -502,9 +544,9 @@
     function render(dt){resize();trisP=[];trisC=[];linesP=[];linesC=[];ptsP=[];ptsC=[];const riders=displayCycles(),local=localCycle(),deathView=local&&!local.alive&&state.deathCam;let focus=local||riders.find(c=>c.alive);if(!focus)focus=riders.find(c=>c.alive);
 
     if(deathView){const t=(state.time-state.deathCam.at)*.31,r=15;const ex=state.deathCam.x+Math.cos(t)*r,ez=state.deathCam.z+Math.sin(t)*r,k=1-Math.pow(.0012,dt);cam.x=lerp(cam.x,ex,k);cam.y=lerp(cam.y,8.8,k);cam.z=lerp(cam.z,ez,k);cam.tx=lerp(cam.tx,state.deathCam.x,k);cam.ty=lerp(cam.ty,.8,k);cam.tz=lerp(cam.tz,state.deathCam.z,k)}else if(focus){const d=DIRS[focus.dir],m=state.camMode,back=m===1?25:m===2?10:35+focus.speed*.15,rise=m===1?14:m===2?70:19+focus.speed*.095,ahead=m===2?0:9;const ex=focus.x-d.x*back,ez=focus.z-d.z*back,ey=rise,tgtx=focus.x+d.x*ahead,tgtz=focus.z+d.z*ahead,k=1-Math.pow(.0007,dt);cam.x=lerp(cam.x,ex,k);cam.y=lerp(cam.y,ey,k);cam.z=lerp(cam.z,ez,k);cam.tx=lerp(cam.tx,tgtx,k);cam.ty=lerp(cam.ty,1,k);cam.tz=lerp(cam.tz,tgtz,k)}else{const t=performance.now()*.00008;cam.x=Math.cos(t)*28;cam.z=Math.sin(t)*28;cam.y=12;cam.tx=cam.tz=0;cam.ty=0}
-      state.shake=Math.max(0,state.shake-dt*2.4);const sx=(Math.random()-.5)*state.shake,sz=(Math.random()-.5)*state.shake;const fx=deathView?state.deathCam.x:focus?focus.x:0,fz=deathView?state.deathCam.z:focus?focus.z:0,size=260,minX=Math.floor((fx-170)/10)*10,maxX=Math.ceil((fx+170)/10)*10,minZ=Math.floor((fz-170)/10)*10,maxZ=Math.ceil((fz+170)/10)*10;quad([fx-size,0,fz-size],[fx+size,0,fz-size],[fx+size,0,fz+size],[fx-size,0,fz+size],[.009,.015,.021,1]);for(let x=minX;x<=maxX;x+=10){const major=Math.abs(x%50)<.01,col=major?[.13,.68,.76,.62]:[.07,.42,.5,.36];line([x,.012,minZ],[x,.012,maxZ],col)}for(let z=minZ;z<=maxZ;z+=10){const major=Math.abs(z%50)<.01,col=major?[.13,.68,.76,.62]:[.07,.42,.5,.36];line([minX,.012,z],[maxX,.012,z],col)}boardGeom(fx,fz);
+      state.shake=Math.max(0,state.shake-dt*2.4);const sx=(Math.random()-.5)*state.shake,sz=(Math.random()-.5)*state.shake;const fx=deathView?state.deathCam.x:focus?focus.x:0,fz=deathView?state.deathCam.z:focus?focus.z:0;gridGeom(fx,fz);boardGeom(fx,fz);
       for(const w of state.walls)if(visibleWall(w))wallGeom(w,{x:fx,z:fz});for(const w of predictedWalls)wallGeom(w,{x:fx,z:fz});for(const c of riders)if(c.alive)wallGeom(activeSegment(c),{x:fx,z:fz});for(const c of riders)bike(c);for(const p of state.particles)V(ptsP,ptsC,[p.x,p.y,p.z],[p.color[0],p.color[1],p.color[2],clamp(p.life*2,0,1)]);
-      gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.008,.012,.018,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.useProgram(program);const proj=matPerspective(Math.PI/3.2,canvas.width/canvas.height,.08,360),view=matLook([cam.x+sx,cam.y,cam.z+sz],[cam.tx,cam.ty,cam.tz]),vp=matMul(proj,view);gl.uniformMatrix4fv(loc.vp,false,vp);gl.uniform3f(loc.cam,cam.x,cam.y,cam.z);drawBatch(gl.TRIANGLES,trisP,trisC);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);gl.lineWidth(1);drawBatch(gl.LINES,linesP,linesC);drawBatch(gl.POINTS,ptsP,ptsC,7*(devicePixelRatio||1));gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA)}
+      gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.008,.012,.018,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.useProgram(program);const proj=matPerspective(Math.PI/3.2,canvas.width/canvas.height,VIEW_RANGE.near,VIEW_RANGE.far),view=matLook([cam.x+sx,cam.y,cam.z+sz],[cam.tx,cam.ty,cam.tz]),vp=matMul(proj,view);gl.uniformMatrix4fv(loc.vp,false,vp);gl.uniform3f(loc.cam,cam.x,cam.y,cam.z);drawBatch(gl.TRIANGLES,trisP,trisC);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);gl.lineWidth(1);drawBatch(gl.LINES,linesP,linesC);drawBatch(gl.POINTS,ptsP,ptsC,7*(devicePixelRatio||1));gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA)}
     function resize(){const d=Math.min(2,devicePixelRatio||1),w=Math.floor(innerWidth*d),h=Math.floor(innerHeight*d);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}}
     function advanceGameClock(now){
       const elapsed=Math.max(0,Math.min(.25,(now-state.simLast)/1000));state.simLast=now;
@@ -512,7 +554,7 @@
       if(state.mode==='guest'){updateGuest(elapsed,now);state.accum=0}
       else{state.accum+=elapsed;while(state.accum>=SIM_DT){step(SIM_DT);state.accum-=SIM_DT}}
     }
-    function loop(now){const raw=Math.min(.1,(now-state.last)/1000);state.last=now;advanceGameClock(now);const local=localCycle();audio.update(local);updateHUD();render(raw);requestAnimationFrame(loop)}requestAnimationFrame(loop);
+    function loop(now){const raw=Math.min(.1,(now-state.last)/1000);state.last=now;advanceGameClock(now);const local=localCycle();audio.update(local,{x:cam.z-cam.tz,z:cam.tx-cam.x});updateHUD();render(raw);requestAnimationFrame(loop)}requestAnimationFrame(loop);
 
     function drawMiniBike(canvas,color,alive){const ctx=canvas.getContext('2d'),w=canvas.width=80,h=canvas.height=36;ctx.clearRect(0,0,w,h);ctx.globalAlpha=alive?1:.42;ctx.strokeStyle=color;ctx.fillStyle=color;ctx.shadowColor=color;ctx.shadowBlur=8;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(3,27);ctx.lineTo(33,27);ctx.stroke();for(const x of [38,65]){ctx.beginPath();ctx.arc(x,25,7,0,Math.PI*2);ctx.stroke()}ctx.beginPath();ctx.moveTo(31,24);ctx.lineTo(43,12);ctx.lineTo(61,13);ctx.lineTo(69,23);ctx.lineTo(45,22);ctx.closePath();ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#061017';ctx.fillRect(46,13,11,4)}
     function renderMinimap(focus){const now=performance.now();if(now<minimapAt)return;minimapAt=now+90;const cv=$('#minimap'),rect=cv.getBoundingClientRect(),d=Math.min(2,devicePixelRatio||1),w=Math.max(1,Math.round(rect.width)),h=Math.max(1,Math.round(rect.height)),pw=Math.round(w*d),ph=Math.round(h*d);if(cv.width!==pw||cv.height!==ph){cv.width=pw;cv.height=ph}const ctx=cv.getContext('2d');ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);ctx.fillStyle='rgba(2,7,10,.92)';ctx.fillRect(0,0,w,h);const range=115,scale=Math.min(w,h)/(range*2),px=x=>w*.5+(x-focus.x)*scale,py=z=>h*.5+(z-focus.z)*scale;ctx.lineWidth=1;for(let x=Math.ceil((focus.x-range)/10)*10;x<=focus.x+range;x+=10){ctx.strokeStyle=Math.abs(x%50)<.01?'rgba(49,236,255,.22)':'rgba(49,236,255,.08)';ctx.beginPath();ctx.moveTo(px(x),0);ctx.lineTo(px(x),h);ctx.stroke()}for(let z=Math.ceil((focus.z-range)/10)*10;z<=focus.z+range;z+=10){ctx.strokeStyle=Math.abs(z%50)<.01?'rgba(49,236,255,.22)':'rgba(49,236,255,.08)';ctx.beginPath();ctx.moveTo(0,py(z));ctx.lineTo(w,py(z));ctx.stroke()}const riders=displayCycles(now),trails=[...state.walls.filter(visibleWall),...predictedWalls,...riders.filter(c=>c.alive).map(activeSegment)];ctx.lineCap='butt';for(const wall of trails){if(Math.max(wall.x1,wall.x2)<focus.x-range||Math.min(wall.x1,wall.x2)>focus.x+range||Math.max(wall.z1,wall.z2)<focus.z-range||Math.min(wall.z1,wall.z2)>focus.z+range)continue;ctx.strokeStyle=wall.color;ctx.globalAlpha=wall.active ? .78 : .58;ctx.lineWidth=wall.owner===state.localId?1.35:1;ctx.beginPath();ctx.moveTo(px(wall.x1),py(wall.z1));ctx.lineTo(px(wall.x2),py(wall.z2));ctx.stroke()}ctx.globalAlpha=1;for(const c of riders){if(!c.alive||Math.abs(c.x-focus.x)>range||Math.abs(c.z-focus.z)>range)continue;const x=px(c.x),y=py(c.z),a=c.dir*Math.PI/2;ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.fillStyle=c.color;ctx.shadowColor=c.color;ctx.shadowBlur=c.id===state.localId?8:5;ctx.beginPath();ctx.moveTo(0,-5);ctx.lineTo(3.7,4);ctx.lineTo(0,2.4);ctx.lineTo(-3.7,4);ctx.closePath();ctx.fill();if(c.id===state.localId){ctx.shadowBlur=0;ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke()}ctx.restore()}ctx.shadowBlur=0;ctx.fillStyle='rgba(192,244,250,.72)';ctx.font='700 7px ui-monospace,monospace';ctx.fillText('230 U',7,h-7);ctx.fillStyle='#31ecff';ctx.textAlign='right';ctx.fillText('N',w-7,11);ctx.textAlign='left'}
@@ -589,8 +631,8 @@
       if(directoryRoom)return directoryRoom;if(directoryLoading)return directoryLoading;const generation=directoryGeneration;
       const pending=(async()=>{
         const mod=await loadPeerModule();if(generation!==directoryGeneration)return null;
-        const room=mod.joinRoom({appId:'grid-infinito-lightcycles-v6',rtcConfig},'GRID-INFINITY-PUBLIC-DIRECTORY-V3',{onJoinError:()=>{if(generation===directoryGeneration)setConn('Discovery reconnecting…')}});
-        directoryRoom=room;directoryAction=room.makeAction('rooms-v2');const valid=()=>generation===directoryGeneration&&directoryRoom===room;
+        const room=mod.joinRoom({appId:'grid-infinito-lightcycles-v7',rtcConfig},'GRID-INFINITY-PUBLIC-DIRECTORY-V4',{onJoinError:()=>{if(generation===directoryGeneration)setConn('Discovery reconnecting…')}});
+        directoryRoom=room;directoryAction=room.makeAction('rooms-v3');const valid=()=>generation===directoryGeneration&&directoryRoom===room;
         directoryAction.onMessage=(data,{peerId})=>{if(valid())handleDirectoryMessage(data,peerId)};
         room.onPeerJoin=peerId=>{if(!valid())return;if(firstDirectoryAt<0)firstDirectoryAt=performance.now();sendDirectory({t:'find'},peerId);advertisePublicRoom(peerId)};
         room.onPeerLeave=peerId=>{if(valid())for(const [id,ad] of publicCandidates)if(ad.peerId===peerId)publicCandidates.delete(id)};
@@ -661,8 +703,8 @@
       if(isPublic)setPublicInvite(autoRoomId);else{closePublicDirectory();setPrivateInvite(autoRoomId)}setConn('Connecting to riders…');
       try{
         const mod=await loadPeerModule();if(generation!==roomGeneration)return;autoSelf=mod.selfId;roomJoinedAt=performance.now();joinDeadline=roomJoinedAt+(options.create?1400:knownRoom?8500:6500);
-        const room=mod.joinRoom({appId:'grid-infinito-lightcycles-v6',rtcConfig},autoRoomId,{onJoinError:()=>{if(generation===roomGeneration)setConn('Connection retrying…')}});
-        autoRoom=room;autoAction=room.makeAction('grid-v6');const valid=()=>generation===roomGeneration&&autoRoom===room;
+        const room=mod.joinRoom({appId:'grid-infinito-lightcycles-v7',rtcConfig},autoRoomId,{onJoinError:()=>{if(generation===roomGeneration)setConn('Connection retrying…')}});
+        autoRoom=room;autoAction=room.makeAction('grid-v7');const valid=()=>generation===roomGeneration&&autoRoom===room;
         autoAction.onMessage=(data,{peerId})=>{if(valid())handleAutoMessage(data,peerId)};
         room.onPeerJoin=peerId=>{if(!valid())return;sendPresence();if(isHost)netSend({t:'host',host:autoSelf,term:hostTerm},peerId);else netSend({t:'probe'},peerId)};
         room.onPeerLeave=peerId=>{if(!valid())return;peerStatus.delete(peerId);if(isHost)removeAutoPeer(peerId);else if(peerId===autoHostPeer){state.running=false;resetGuestPrediction();$('#chatBtn').disabled=true;lastHostAt=performance.now()-7000;setConn('Reconnecting to the room…')}};

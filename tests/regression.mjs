@@ -59,6 +59,33 @@ for(const origin of [0,1e6])for(let dir=0;dir<4;dir++){
   for(let i=0;i<300;i++)g.step(1/60);check(c.alive&&c.x>400,'high-speed narrow corridor stays safe');
 }
 
+{
+  const g=game(),c=g.makeCycle(0,'coast','#31ecff',0,0,1,true,false);g.state.cycles=[c];c.speed=g.cfg.maxSpeed;
+  for(let i=0;i<60;i++)g.advanceCycle(c,1/60);
+  close(c.speed,g.cfg.baseSpeed+(82-g.cfg.baseSpeed)*(1-g.cfg.coastDrag/60)**60,'coasting uses slower exponential drag');
+  check(c.speed>62&&c.speed<64,'one second after boost retains meaningful momentum');
+  c.speed=12;g.advanceCycle(c,1/60);close(c.speed,12+(g.cfg.baseSpeed-12)*.68/60,'below-base recovery unchanged');
+  c.speed=82;c.brake=true;c.brakeEnergy=1;g.advanceCycle(c,1/60);close(c.speed,82+(g.cfg.baseSpeed-82)*.68/60-23/60,'powered brake retains previous effectiveness');
+  c.speed=82;c.brakeEnergy=0;g.advanceCycle(c,1/60);close(c.speed,82+(g.cfg.baseSpeed-82)*g.cfg.coastDrag/60,'empty brake coasts naturally');
+}
+
+{
+  const segments=[],floors=[];
+  const geometry=new Function('line','quad',`const clamp=(n,a,b)=>Math.max(a,Math.min(b,n)),state={mode:'solo',time:2},cfg={wallHeight:1.48},hex=(c,a)=>[1,1,1,a];${script.split('\n').find(s=>s.includes('function pointSegDistance('))} ${section('const VIEW_RANGE=','function shader(')} ${section('function worldHash(','function visibleWall(')} ${section('function wallGeom(','function bikeHull(')};return{VIEW_RANGE,vs,fs,gridGeom,boardGeom,wallGeom}`)((a,b,color)=>segments.push({a,b,color}),(a,b,c,d,color)=>floors.push({a,b,c,d,color}));
+  const r=geometry.VIEW_RANGE;check(r.grid>r.fogEnd+50&&r.wall>r.fogEnd+50,'geometry covers full fog range plus chase offset');check(r.far>Math.SQRT2*r.floor+60,'far plane covers floor corners');
+  check(geometry.vs.includes('(aPos.xz-uCam.xz)/620.0')&&geometry.fs.includes('length(vFog)'),'fog uses normalized camera-relative varying for mobile precision');
+  geometry.gridGeom(0,0);const first=segments.slice();check(first.length<300,'extended horizon keeps grid geometry bounded');
+  segments.length=0;geometry.gridGeom(51,101);const shifted=segments.slice();
+  for(const s of first){const axis=s.a[0]===s.b[0]?0:2,value=s.a[axis],same=shifted.find(t=>t.a[axis]===value&&t.b[axis]===value);if(same)eq(s.color,same.color,'major/minor world grid classification never shifts')}
+  segments.length=0;geometry.boardGeom(0,0);check(segments.length>0&&segments.length<2000,'near circuit detail bounded independently of horizon');
+  check(segments.every(s=>s.a[0]===s.b[0]||s.a[2]===s.b[2]),'circuit paths and pulses remain cardinal');check(segments.every(s=>s.color[3]>0&&s.color[3]<=1),'circuit distance fades stay valid');
+  check(r.near>=.5&&geometry.vs.includes('varying mediump vec2 vFog')&&geometry.fs.includes('varying mediump vec2 vFog'),'mobile fog precision matches and depth range stays useful');
+  segments.length=floors.length=0;geometry.wallGeom({x1:1,z1:1,x2:10000,z2:1},{x:0,z:0});eq(floors.length,1,'long walls crossing nearby retain full surface');
+  segments.length=floors.length=0;geometry.wallGeom({x1:500,z1:0,x2:510,z2:0},{x:0,z:0});eq(floors.length,0,'far walls avoid surface geometry');eq(segments.length,1,'far walls retain luminous edge');
+  segments.length=floors.length=0;for(let i=0;i<20000;i++){const x=i%142*10-710,z=Math.floor(i/142)*10-710;geometry.wallGeom({x1:x,z1:z,x2:x+5,z2:z},{x:0,z:0})}
+  check(floors.length<segments.length*.5&&segments.length<20000,'dense histories bound surface generation and cull distant walls');
+}
+
 // Two independent copies of the real game with artificial transit delays and jitter.
 async function networkScenario(delay,jitter=0){
   const host=game(),guest=game(),messages=[],peer={id:1,peerId:'guest',name:'guest'};

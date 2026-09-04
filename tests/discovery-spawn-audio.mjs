@@ -11,7 +11,7 @@ function game(){
     const location={origin:'https://game.test',pathname:'/',href:'https://game.test/',hash:''},history={replaceState(a,b,href){const u=new URL(href,location.origin);location.href=u.href;location.hash=u.hash}};
     function resetChat(){} function applyLocalPreferences(){} function acceptChat(){} function showToast(){} function closeNetwork(){} function updateHUD(){} function setRulesOpen(){} function announcePresence(){}
     ${core}
-    return {state,document,hostPeers,peerStatus,publicCandidates,failedRooms,makeCycle,activeSegment,spawnRay,certifiedSpawn,chooseSafeSpawn,safeBotSpawn,safeRespawn,spawnRunwaySafe,packWall,advanceGameClock,step,matchPublicRoom,joinAutoRoom,networkMaintenance,recoverVisiblePage,handleDirectoryMessage,rankedPublicRooms,consolidatePublicRoom,handleAutoMessage,sendPresence,
+    return {state,DIRS,document,hostPeers,peerStatus,publicCandidates,failedRooms,makeCycle,activeSegment,spawnRay,certifiedSpawn,chooseSafeSpawn,safeBotSpawn,safeRespawn,spawnRunwaySafe,packWall,advanceGameClock,step,matchPublicRoom,joinAutoRoom,networkMaintenance,recoverVisiblePage,handleDirectoryMessage,rankedPublicRooms,consolidatePublicRoom,handleAutoMessage,sendPresence,
       setModule:m=>loadPeerModule=()=>Promise.resolve(m),setModuleLoader:f=>loadPeerModule=f,
       setFlow:f=>publicJoinMode=f,
       get net(){return{room:autoRoomId,roomObject:autoRoom,self:autoSelf,host:autoHostPeer,isHost,term:hostTerm,pending:publicMatchPending}},get url(){return location.href}};
@@ -70,7 +70,7 @@ function network(directoryDelay=4500){
 {
   const n=network(4000),g=n.add('a');await g.matchPublicRoom();g.document.hidden=true;await n.advance(12000);assert.equal(g.net.room,'','hidden search cannot create room');
   g.document.hidden=false;g.recoverVisiblePage();await n.advance(12500);assert.equal(g.net.room,'','fresh discovery dwell after visibility return');
-  const ad={t:'ad',protocol:6,room:'PUB-OLD',humans:2,max:4,open:2,available:true,seq:1};g.handleDirectoryMessage(ad,'x');assert.equal(g.rankedPublicRooms().length,1);g.clock.now+=13000;assert.equal(g.rankedPublicRooms().length,0,'stale advertisement expires');
+  const ad={t:'ad',protocol:7,room:'PUB-OLD',humans:2,max:4,open:2,available:true,seq:1};g.handleDirectoryMessage(ad,'x');assert.equal(g.rankedPublicRooms().length,1);g.clock.now+=13000;assert.equal(g.rankedPublicRooms().length,0,'stale advertisement expires');
 }
 {
   const n=network(0),g=n.add('a');await g.joinAutoRoom('PUB-MISSING',true,{expected:true});g.setFlow('match');await n.advance(9000);
@@ -78,7 +78,7 @@ function network(directoryDelay=4500){
 }
 {
   const n=network(0),g=n.add('a');g.setFlow('direct');await g.joinAutoRoom('PUB-PINNED',true,{create:true});await n.advance(4000);
-  g.handleDirectoryMessage({t:'ad',protocol:6,room:'PUB-BUSY',humans:3,max:4,open:1,seq:1},'other');g.consolidatePublicRoom();assert.equal(g.net.room,'PUB-PINNED','direct invitation remains pinned');
+  g.handleDirectoryMessage({t:'ad',protocol:7,room:'PUB-BUSY',humans:3,max:4,open:1,seq:1},'other');g.consolidatePublicRoom();assert.equal(g.net.room,'PUB-PINNED','direct invitation remains pinned');
 }
 {
   const g=game(),created=[];let release;g.setModuleLoader(()=>new Promise(r=>release=r));const stale=g.joinAutoRoom('PRI-OLD',false);const fake={selfId:'self',joinRoom(config,name){created.push(name);return{makeAction(){return{send:()=>Promise.resolve()}},getPeers:()=>({}),leave(){}}}};
@@ -95,7 +95,7 @@ console.log('delayed discovery, consolidation, visibility handoff, generations a
   await b.joinAutoRoom('PUB-SILENT',true,{expected:true});await c.joinAutoRoom('PUB-SILENT',true,{expected:true});await n.advance(7000);
   a.frozen=true;await n.advance(18000);assert.equal(b.net.isHost,true,'silent host replaced by one visible successor');assert.equal(c.net.host,'b');
   a.frozen=false;a.recoverVisiblePage();await n.advance(20500);assert.equal(a.net.isHost,false,'resuming frozen host accepts newer authority');assert.equal(b.hostPeers.size,2);
-  const ad={t:'ad',protocol:6,room:'PUB-TERM',humans:2,max:4,open:2,seq:1,term:2};c.handleDirectoryMessage(ad,'new');c.handleDirectoryMessage({...ad,available:false,seq:9,term:1},'old');assert.equal(c.publicCandidates.get('PUB-TERM').peerId,'new','retiring host cannot withdraw successor advertisement');
+  const ad={t:'ad',protocol:7,room:'PUB-TERM',humans:2,max:4,open:2,seq:1,term:2};c.handleDirectoryMessage(ad,'new');c.handleDirectoryMessage({...ad,available:false,seq:9,term:1},'old');assert.equal(c.publicCandidates.get('PUB-TERM').peerId,'new','retiring host cannot withdraw successor advertisement');
 }
 {
   const n=network(0),a=n.add('a'),b=n.add('b'),c=n.add('c');await a.joinAutoRoom('PRI-FULL',false,{create:true});await n.advance(2000);a.state.maxHumans=2;
@@ -112,16 +112,37 @@ sound.ctx.currentTime=.075;sound.music();sound.ctx.currentTime=.18;sound.music()
 for(let i=1;i<events.length;i++)assert.ok(Math.abs(events[i].t-events[i-1].t-audioAPI.MUSIC_STEP)<1e-10,'audio-clock beats stay evenly spaced despite callback jitter');
 sound.ctx.currentTime=45;const before=events.length;sound.music();assert.ok(events.length-before<3,'resume skips stale beats rather than bursting');assert.equal(events[before].step%16,0,'resume aligns to bar');
 sound.muted=true;sound.ctx.currentTime=46;const muted=events.length;sound.music();assert.equal(events.length,muted,'saved mute respected');
-assert.ok(audioAPI.MUSIC_MELODY.every(phrase=>phrase.some(note=>note[2]>=5)),'melody includes sustained notes, not only constant arpeggios');
+assert.ok(audioAPI.MUSIC_MELODY.every(phrase=>phrase.some(note=>note[2]>=5)),'melody retains varied phrase lengths');
 console.log('music score and audio-clock scheduler checks passed');
 {
   const scheduled=[];
-  const param=()=>({value:0,setValueAtTime(v,t){assert.ok(Number.isFinite(v)&&Number.isFinite(t))},exponentialRampToValueAtTime(v,t){assert.ok(v>0&&Number.isFinite(t))},setTargetAtTime(v,t,k){assert.ok(Number.isFinite(v)&&Number.isFinite(t)&&k>0)}});
-  const node=()=>({gain:param(),frequency:param(),detune:param(),Q:param(),delayTime:param(),threshold:param(),knee:param(),ratio:param(),attack:param(),release:param(),connect(n){assert.ok(n);return n},disconnect(){},start(t=0){assert.ok(t>=0);this.started=t;scheduled.push(this)},stop(t){assert.ok(t>=(this.started||0)&&Number.isFinite(t))}});
-  class Context{constructor(){this.state='running';this.currentTime=0;this.sampleRate=48000;this.destination=node()}async resume(){}createGain(){return node()}createOscillator(){return node()}createDynamicsCompressor(){return node()}createDelay(){return node()}createBiquadFilter(){return node()}createBufferSource(){return node()}createBuffer(c,n){return{getChannelData:()=>new Float32Array(n)}}}
-  const Sound=new Function('localStorage','window',`const setInterval=()=>1;function syncSoundButton(){} function showToast(){} function syncMusicToggle(){} ${audioCode};return Soundscape`)({getItem:()=>null,setItem(){}},{AudioContext:Context});
+  const param=()=>({value:0,setValueAtTime(v,t){assert.ok(Number.isFinite(v)&&Number.isFinite(t));this.value=v},exponentialRampToValueAtTime(v,t){assert.ok(v>0&&Number.isFinite(t));this.value=v},setTargetAtTime(v,t,k){assert.ok(Number.isFinite(v)&&Number.isFinite(t)&&k>0);this.target=v}});
+  const node=()=>({gain:param(),pan:param(),frequency:param(),detune:param(),Q:param(),delayTime:param(),threshold:param(),knee:param(),ratio:param(),attack:param(),release:param(),connect(n){assert.ok(n);return n},disconnect(){this.disconnected=true},start(t=0){assert.ok(t>=0);this.started=t;scheduled.push(this)},stop(t){assert.ok(t>=(this.started||0)&&Number.isFinite(t));this.stopped=t}});
+  class Context{constructor(){this.state='running';this.currentTime=0;this.sampleRate=48000;this.destination=node()}async resume(){}createGain(){return node()}createStereoPanner(){return node()}createOscillator(){return node()}createDynamicsCompressor(){return node()}createDelay(){return node()}createBiquadFilter(){return node()}createBufferSource(){return node()}createBuffer(c,n){return{getChannelData:()=>new Float32Array(n)}}}
+  const audioState={mode:'guest',running:true,cycles:[]};
+  const {Soundscape:Sound,nearbyMotorMix}=new Function('localStorage','window','state','DIRS',`const clamp=(n,a,b)=>Math.max(a,Math.min(b,n)),setInterval=()=>1;function syncSoundButton(){} function showToast(){} function syncMusicToggle(){} ${audioCode};return{Soundscape,nearbyMotorMix}`)({getItem:()=>null,setItem(){}},{AudioContext:Context},audioState,game().DIRS);
   const real=new Sound();await real.init(true);for(let step=0;step<512;step++)real.musicCell(step,10+step*audioAPI.MUSIC_STEP);
   assert.ok(scheduled.length>1000&&scheduled.length<2500,'complete score schedules bounded synth voices');assert.ok(real.musicSpace!==real.echo,'score and engine echo are isolated');
   real.setMusic(false);assert.equal(real.musicEnabled,false);await real.toggle();assert.equal(real.muted,true);await real.toggle();assert.equal(real.muted,false);
   console.log('full synth graph, note envelopes and audio toggles passed');
+  const listener={id:4,x:0,z:0,dir:0,alive:true,speed:22.2,grind:0},other=(id,x,z=0)=>({id,x,z,dir:0,alive:true,speed:40,grind:.5,human:id%2===0});
+  assert.deepEqual(nearbyMotorMix(null,[]),[]);
+  const mix=nearbyMotorMix(listener,[listener,other(1,2),other(2,35),other(3,109),other(5,110),{...other(6,1),alive:false}],{x:1,z:0});
+  assert.deepEqual(mix.map(v=>v.cycle.id),[1,2,3],'only living other riders inside audible radius');
+  assert.ok(mix[0].gain>mix[1].gain&&mix[1].gain>mix[2].gain&&mix[2].gain>0,'continuous distance attenuation');
+  assert.ok(mix.every(v=>v.pan>0&&v.pan<=.85));
+  assert.ok(nearbyMotorMix(listener,[other(1,20)],{x:-1,z:0})[0].pan<0,'stereo follows camera orientation');
+  assert.ok(Number.isFinite(nearbyMotorMix(listener,[other(1,0)],{x:0,z:0})[0].pan),'coincident rider and vertical camera stay finite');
+  const crowd=Array.from({length:12},(_,i)=>other(i+10,i*.001));
+  const limited=nearbyMotorMix(listener,crowd);assert.equal(limited.length,6);assert.ok(limited.reduce((sum,v)=>sum+v.gain,0)<=.0800000001,'crowd has bounded total gain');
+  audioState.cycles=[listener,other(1,2),other(2,-20)];real.update(listener,{x:1,z:0});
+  assert.equal(real.remotes.size,2,'music off still plays human and AI motors');assert.equal(real.remotes.has(listener.id),false,'guest never hears a duplicate own engine');
+  const voice=real.remotes.get(1);assert.ok(voice.gain.gain.target>0);assert.equal(voice.engine.frequency.target,38+40*2.15);assert.equal(voice.whine.frequency.target,90+40*8.2+.5*85);
+  listener.alive=false;real.update(listener);assert.equal(real.engineGain.gain.target,0);assert.equal(real.remotes.size,2,'death view retains nearby living motors');listener.alive=true;
+  audioState.cycles=[listener];real.update(listener);assert.equal(real.remotes.size,0);assert.equal(voice.engine.stopped,.2);voice.engine.onended();assert.ok(Object.values(voice).every(v=>v.disconnected),'retired voices disconnect every node');
+  for(let i=0;i<100;i++){audioState.cycles=[listener,...crowd];real.update(listener);assert.equal(real.remotes.size,6);audioState.cycles=[listener];real.update(listener);assert.equal(real.remotes.size,0)}
+  audioState.cycles=[listener,...crowd];real.update(listener);await real.toggle();real.update(listener);assert.equal(real.remotes.size,0,'mute retires nearby voices');await real.toggle();
+  for(const mode of ['connecting','menu']){audioState.mode=mode;real.update(listener);assert.equal(real.remotes.size,0);assert.equal(real.engineGain.gain.target,0,'non-playing states silence motors')}
+  audioState.mode='guest';audioState.running=false;real.update(listener);assert.equal(real.remotes.size,0);
+  console.log('distance/stereo motor mix, crowd ceiling and voice lifecycle passed');
 }
