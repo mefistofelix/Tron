@@ -124,12 +124,12 @@
     const COLORS=['#31ecff','#ff3da8','#ffd84a','#76ff74','#9d7bff','#ff784f','#38ffbd','#ff69e1','#b9ff4d','#48a7ff','#ffb347','#d7f2ff'];
     const DIRS=[{x:0,z:-1},{x:1,z:0},{x:0,z:1},{x:-1,z:0}];
     const cfg={baseSpeed:22.2,maxSpeed:82,minSpeed:7.5,turnFactor:.94,coastDrag:.38,turnDelay:.008,wallNear:7.5,wallHeight:1.48,blastRadius:4.4};
-    const SIM_DT=1/60,NET_PROTOCOL=7;
+    const SIM_DT=1/60,NET_PROTOCOL=8;
 
     function storedInt(key,fallback,min,max){const n=Number.parseInt(localStorage.getItem(key),10);return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback}
     const state={mode:'menu',running:false,time:0,tick:0,wallRevision:0,needsSnapshot:false,round:0,roundEnding:false,cycles:[],walls:[],particles:[],scores:[],chat:[],nextWall:1,nextCycle:100,accum:0,simLast:performance.now(),last:performance.now(),sendClock:0,camMode:storedInt('grid-camera',0,0,2),localId:0,shake:0,aiCount:storedInt('grid-ai-count',3,0,6),maxHumans:storedInt('grid-max-humans',4,2,6),clearTrailsOnCrash:false,roomId:'',deathCam:null,leaderSig:'',leaderRenderAt:0};
-    let isHost=false,toastTimer=0,installPrompt=null,autoRoom=null,autoAction=null,autoSelf='',autoHostPeer='',autoConnectTimer=0,autoRoomId='',autoIsPublic=false,publicJoinMode='',publicInviteLink='',privateInviteLink='',directoryRoom=null,directoryAction=null,directoryTimer=0,publicMatchTimer=0,publicProbeTimers=[],publicMatchPending=false,minimapAt=0,guestInputSeq=0,guestPendingTurns=[],predictedWalls=[],guestTick=0,guestAnchor=null,netRtt=.1,netPingAt=0,lastSnapshotTick=-1,guestAck=0,pendingGuestSnapshot=null,resyncAt=0;
-    const hostPeers=new Map(),chatSeen=new Set(),publicCandidates=new Map();
+    let isHost=false,toastTimer=0,installPrompt=null,autoRoom=null,autoAction=null,autoSelf='',autoHostPeer='',autoConnectTimer=0,autoRoomId='',autoIsPublic=false,publicJoinMode='',publicInviteLink='',privateInviteLink='',publicMatchPending=false,minimapAt=0,guestInputSeq=0,guestPendingTurns=[],predictedWalls=[],guestTick=0,guestAnchor=null,netRtt=.1,netPingAt=0,lastSnapshotTick=-1,guestAck=0,pendingGuestSnapshot=null,resyncAt=0;
+    const hostPeers=new Map(),chatSeen=new Set();
 
     function hex(h,a=1){h=h.replace('#','');return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255,a]}
     const RIDER_A=['NEON','BYTE','LASER','VECTOR','NOVA','ZERO','CHROME','PIXEL','ION','CIRCUIT'],RIDER_B=['FOX','GHOST','LYNX','PULSE','VEX','DRIFT','ECHO','RAY','BOLT','WAVE'];
@@ -563,7 +563,58 @@
     function updateHUD(){const c=localCycle();if(!c)return;renderMinimap(c);$('#speed').innerHTML=Math.round(c.speed*3.6)+' <small>km/h</small>';const be=clamp(c.brakeEnergy,0,1),rr=clamp(1-c.rubber,0,1);$('#brakeMeter').style.transform=`scaleX(${be})`;$('#rubberMeter').style.transform=`scaleX(${rr})`;$('#brakeText').textContent=Math.round(be*100)+'%';$('#rubberText').textContent=Math.round(rr*100)+'%';const bots=state.cycles.filter(x=>x.ai),humans=state.cycles.filter(x=>x.human);syncRosterButton();$('#modeLabel').textContent=state.mode==='solo'?'SOLO · '+bots.length+' AI':'P2P · '+humans.length+'/'+state.maxHumans+' HUMANS';$('#grindLabel').textContent=c.alive?(c.grind>.18?'WALL NEAR · '+Math.round(c.grind*100)+'%':c.brake?'BRAKE ACTIVE':'FIND A TRAIL'):'SIGNAL LOST';const sig=state.mode+'|'+state.localId+'|'+state.cycles.map(x=>[x.id,x.name,x.color,x.alive,state.scores[x.id]||0].join(':')).join('|');if(sig!==state.leaderSig&&performance.now()>state.leaderRenderAt){state.leaderSig=sig;state.leaderRenderAt=performance.now()+180;renderLeaderboard()}}
 
     // Host-authoritative simulation over automatic WebRTC rooms.
-    const rtcConfig={iceServers:[{urls:'stun:stun.cloudflare.com:3478'}]};
+    const rtcConfig={iceServers:[{urls:'stun:stun.cloudflare.com:3478'},{urls:'stun:stun.l.google.com:19302'}]};
+    const cloudIdentity=()=>({peerId:Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join(''),key:Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('')});
+    async function lobbyRequest(path,body,identity,keepalive=false){
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+      try{const response=await fetch('/api/lobby/'+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+identity.key},body:JSON.stringify({...body,peerId:identity.peerId}),cache:'no-store',keepalive,signal:controller.signal});let data;try{data=await response.json()}catch{throw Error('Online service unavailable')};if(!response.ok)throw Object.assign(Error(data.error||'Connection failed'),{status:response.status});return data}finally{clearTimeout(timer)}
+    }
+    class CloudRoom{
+      constructor(identity,info){this.identity=identity;this.info=info;this.peers=new Map();this.actions=new Map();this.signals=[];this.cursor=0;this.timer=0;this.polling=false;this.closed=false;this.refreshPending=false;this.lastOkay=performance.now();this.messageId=0}
+      getPeers(){return Object.fromEntries([...this.peers].filter(([,p])=>p.open).map(([id,p])=>[id,p.pc]))}
+      makeAction(name){if(!this.actions.has(name))this.actions.set(name,{onMessage:null,send:(data,options={})=>Promise.all([...this.peers].filter(([id,p])=>p.open&&(!options.target||id===options.target)).map(([id,p])=>this.send(p,JSON.stringify({name,data}))))});return this.actions.get(name)}
+      start(){this.receiveInfo(this.info);this.refresh()}
+      receiveInfo(info){if(this.closed)return;this.info=info;this.onAuthority?.(info.room);const ids=new Set(info.peers.map(p=>p.id));
+        for(const [id,p] of this.peers)if(!ids.has(id)){this.drop(id,p);this.peers.delete(id)}
+        for(const peer of info.peers)if(peer.id!==this.identity.peerId&&!this.peers.has(peer.id))this.connect(peer.id);
+      }
+      connect(id){const p={pc:new RTCPeerConnection(rtcConfig),open:false,session:'',sent:false,ice:[],pending:[],queue:Promise.resolve(),queued:0,retry:0,assembly:null};this.peers.set(id,p);
+        p.pc.onicecandidate=e=>{if(e.candidate){const body={type:'candidate',session:p.session,candidate:e.candidate.toJSON()};if(p.sent)this.signal(id,body);else p.ice.push(body)}};
+        p.pc.ondatachannel=e=>this.attach(id,p,e.channel);
+        p.pc.onconnectionstatechange=()=>{if(p.pc.connectionState==='failed'||p.pc.connectionState==='disconnected'){clearTimeout(p.retry);p.retry=setTimeout(()=>{if(!this.closed&&this.peers.get(id)===p&&p.pc.connectionState!=='connected'){this.drop(id,p);this.peers.delete(id);this.signal(id,{type:'reset'});if(this.info.peers.some(x=>x.id===id))this.connect(id)}},4000)}};
+        if(this.identity.peerId<id){p.session=crypto.randomUUID();this.attach(id,p,p.pc.createDataChannel('grid',{ordered:true}));(async()=>{await p.pc.setLocalDescription(await p.pc.createOffer());if(this.closed||this.peers.get(id)!==p)return;this.signal(id,{type:'offer',session:p.session,sdp:p.pc.localDescription.sdp});p.sent=true;for(const candidate of p.ice)this.signal(id,candidate);p.ice=[]})().catch(()=>this.onFailure?.(0,'Peer connection failed'))}return p
+      }
+      attach(id,p,channel){p.channel=channel;channel.bufferedAmountLowThreshold=131072;
+        channel.onopen=()=>{if(this.closed||this.peers.get(id)!==p)return;p.open=true;this.onPeerJoin?.(id);this.refresh()};
+        channel.onclose=()=>{if(p.open){p.open=false;this.onPeerLeave?.(id)}};
+        channel.onmessage=e=>{try{const packet=JSON.parse(e.data);if(!Number.isSafeInteger(packet.id)||!Number.isInteger(packet.n)||packet.n<1||packet.n>2048||!Number.isInteger(packet.i)||packet.i<0||packet.i>=packet.n||typeof packet.d!=='string'||packet.d.length>8000)return;
+          if(packet.i===0)p.assembly={id:packet.id,n:packet.n,next:0,parts:[]};const a=p.assembly;if(!a||a.id!==packet.id||a.n!==packet.n||a.next!==packet.i)return;a.parts.push(packet.d);a.next++;if(a.next===a.n){p.assembly=null;const message=JSON.parse(a.parts.join(''));Promise.resolve(this.actions.get(message.name)?.onMessage?.(message.data,{peerId:id})).catch(()=>{})}}catch{p.assembly=null}}
+      }
+      send(p,text){if(text.length>16384000||p.queued>=32)return Promise.reject(Error('Peer send queue full'));p.queued++;
+        const task=p.queue.then(async()=>{const id=++this.messageId,n=Math.max(1,Math.ceil(text.length/8000));for(let i=0;i<n;i++){const channel=p.channel;if(this.closed||channel?.readyState!=='open')throw Error('Peer disconnected');
+          if(channel.bufferedAmount>524288)await new Promise((resolve,reject)=>{const timer=setTimeout(()=>done(Error('Peer send timeout')),5000),low=()=>done(),closed=()=>done(Error('Peer disconnected'));function done(error){clearTimeout(timer);channel.removeEventListener('bufferedamountlow',low);channel.removeEventListener('close',closed);error?reject(error):resolve()}channel.addEventListener('bufferedamountlow',low,{once:true});channel.addEventListener('close',closed,{once:true})});channel.send(JSON.stringify({id,i,n,d:text.slice(i*8000,(i+1)*8000)}))}}).finally(()=>p.queued--);p.queue=task.catch(()=>{});return task
+      }
+      signal(to,body){if(this.closed)return;if(this.signals.length<96)this.signals.push({to,body});this.refresh()}
+      async receiveSignal(s){const id=s.from;if(!this.info.peers.some(x=>x.id===id))return;let p=this.peers.get(id);const b=s.body;
+        if(b.type==='reset'){if(p){this.drop(id,p);this.peers.delete(id)}this.connect(id);return}
+        if(!p)p=this.connect(id);
+        try{if(b.type==='offer'){if(id>this.identity.peerId||!b.session)return;if(p.session===b.session&&p.pc.remoteDescription)return;
+            if(p.session&&p.session!==b.session){this.drop(id,p);this.peers.delete(id);p=this.connect(id)}p.session=b.session;
+            await p.pc.setRemoteDescription({type:'offer',sdp:b.sdp});for(const c of p.pending)if(c.session===p.session)await p.pc.addIceCandidate(c.candidate);p.pending=[];
+            await p.pc.setLocalDescription(await p.pc.createAnswer());this.signal(id,{type:'answer',session:p.session,sdp:p.pc.localDescription.sdp});p.sent=true;for(const c of p.ice)this.signal(id,c);p.ice=[]
+          }else if(b.type==='answer'){if(b.session!==p.session||p.pc.signalingState!=='have-local-offer')return;await p.pc.setRemoteDescription({type:'answer',sdp:b.sdp});for(const c of p.pending)if(c.session===p.session)await p.pc.addIceCandidate(c.candidate);p.pending=[]
+          }else if(b.type==='candidate'){if(p.pc.remoteDescription&&b.session===p.session)await p.pc.addIceCandidate(b.candidate);else if(p.pending.length<40)p.pending.push(b)}
+        }catch{this.onFailure?.(0,'Peer connection retrying')}
+      }
+      refresh(){if(this.closed)return;if(this.polling){this.refreshPending=true;return}clearTimeout(this.timer);this.timer=setTimeout(()=>this.poll(),80)}
+      async poll(){if(this.closed||this.polling)return;this.polling=true;this.refreshPending=false;const signals=this.signals.splice(0,24);
+        try{const info=await lobbyRequest('poll',{cursor:this.cursor,signals,visible:!document.hidden,host:this.getHostSettings?.()},this.identity);if(this.closed)return;this.lastOkay=performance.now();this.receiveInfo(info);for(const s of info.signals)await this.receiveSignal(s);this.cursor=info.cursor}
+        catch(error){this.signals.unshift(...signals);this.signals.length=Math.min(96,this.signals.length);this.onFailure?.(error.status||0,error.message)}
+        finally{this.polling=false;if(!this.closed){clearTimeout(this.timer);this.timer=setTimeout(()=>this.poll(),this.refreshPending||this.signals.length?100:this.peers.size&&Object.keys(this.getPeers()).length<this.peers.size?700:2000)}}
+      }
+      drop(id,p){clearTimeout(p.retry);if(p.open){p.open=false;this.onPeerLeave?.(id)}p.pc.onconnectionstatechange=null;p.channel?.close();p.pc.close();p.assembly=null}
+      leave(){if(this.closed)return;this.closed=true;clearTimeout(this.timer);for(const [id,p] of this.peers)this.drop(id,p);this.peers.clear();lobbyRequest('leave',{},this.identity,true).catch(()=>{})}
+    }
     const snapshotOutbox=new Map();
     function netSend(obj,target=null){
       const action=autoAction;if(!action)return;
@@ -577,7 +628,7 @@
       }else action.send(obj,peer?{target:peer}:undefined).catch(()=>{})
     }
 
-    function randomRoomPart(n=5){const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';return Array.from({length:n},()=>chars[Math.random()*chars.length|0]).join('')}
+    function randomRoomPart(n=5){const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';return Array.from(crypto.getRandomValues(new Uint8Array(n)),x=>chars[x%32]).join('')}
     function cleanRoom(value){return String(value||'').toUpperCase().replace(/[^A-Z0-9-]/g,'').replace(/-+/g,'-').slice(0,24)}
     function inviteBase(){return location.origin==='null'?location.href.split('#')[0]:location.origin+location.pathname}
     function publicRoomLink(code){return inviteBase()+'#auto=1&public=1&room='+encodeURIComponent(code)}
@@ -586,64 +637,14 @@
     function clearCurrentInvite(){if(location.hash)history.replaceState(null,'',inviteBase());$('#shareBtn').disabled=true;publicInviteLink=privateInviteLink=''}
     function setPublicInvite(code){code=cleanRoom(code);publicInviteLink=code?setCurrentInvite(publicRoomLink(code)):'';return code}
     function setPrivateInvite(code){code=cleanRoom(code);privateInviteLink=code?setCurrentInvite(privateRoomLink(code)):'';return code}
-    let roomGeneration=0,directoryGeneration=0,directoryLoading=null,peerModulePromise=null,roomJoinedAt=0,roomReadyAt=0,joinDeadline=0,knownRoom=false,lastHostAt=0,hostTerm=0,matchStartedAt=0,firstDirectoryAt=-1,lastAdAt=0,lastProbeAt=0,lastPresenceAt=0,lastMaintenance=-Infinity,adSequence=0,lastRecoveryAt=0;
+    let roomGeneration=0,roomJoinedAt=0,roomReadyAt=0,lastHostAt=0,hostTerm=0,lastPresenceAt=0,lastMaintenance=-Infinity,lastRecoveryAt=0;
     const peerStatus=new Map(),failedRooms=new Map();
-    function loadPeerModule(){return peerModulePromise||(peerModulePromise=import('https://esm.run/trystero@0.25.3').catch(e=>{peerModulePromise=null;throw e}))}
     function roomPeerIds(){return Object.keys(autoRoom?.getPeers?.()||{})}
-    function sendDirectory(obj,target=null){if(!directoryAction)return;directoryAction.send(obj,target?{target}:undefined).catch(()=>{})}
-    function publicSlots(){return Math.max(0,state.maxHumans-(1+hostPeers.size))}
-    function advertisePublicRoom(target=null,available=!document.hidden&&state.running){
-      if(!autoIsPublic||!isHost||!autoRoomId||!directoryAction)return;const humans=1+hostPeers.size;lastAdAt=performance.now();
-      sendDirectory({t:'ad',protocol:NET_PROTOCOL,room:autoRoomId,humans,players:humans,max:state.maxHumans,open:publicSlots(),available:!!available,term:hostTerm,seq:++adSequence},target)
-    }
-    function clearPublicProbes(){for(const timer of publicProbeTimers)clearTimeout(timer);publicProbeTimers=[]}
-    function stopPublicSearch(){clearTimeout(publicMatchTimer);clearPublicProbes();publicMatchTimer=0;publicMatchPending=false}
-    function closePublicDirectory(){
-      directoryGeneration++;directoryLoading=null;clearInterval(directoryTimer);directoryTimer=0;stopPublicSearch();publicCandidates.clear();
-      if(directoryRoom)try{directoryRoom.leave()}catch{}directoryRoom=directoryAction=null
-    }
-    function rankedPublicRooms(now=performance.now()){
-      for(const [room,ad] of publicCandidates)if(now-ad.seen>12000)publicCandidates.delete(room);
-      return [...publicCandidates.values()].filter(ad=>ad.available&&ad.open>0&&ad.room!==autoRoomId&&(failedRooms.get(ad.room)||0)<=now).sort((a,b)=>b.humans-a.humans||a.open-b.open||a.room.localeCompare(b.room))
-    }
-    function joinPublicCandidate(best){stopPublicSearch();publicJoinMode='match';showToast('Riders found · joining their grid');setConn('Joining '+best.humans+'/'+best.max+' humans…');joinAutoRoom(best.room,true,{expected:true})}
-    function finishPublicMatch(now=performance.now()){
-      if(!publicMatchPending||document.hidden)return;const best=rankedPublicRooms(now)[0],elapsed=now-matchStartedAt;
-      if(best&&elapsed>=900&&firstDirectoryAt>=0&&now-firstDirectoryAt>=700){joinPublicCandidate(best);return}
-      if(elapsed<8000)return;stopPublicSearch();publicJoinMode='match';setConn('Opening a grid · still looking for riders…');joinAutoRoom('PUB-'+randomRoomPart(6),true,{create:true})
-    }
-    function consolidatePublicRoom(now=performance.now()){
-      if(document.hidden||publicMatchPending||!isHost||!autoIsPublic||publicJoinMode!=='match'||hostPeers.size||roomPeerIds().length||now-roomReadyAt<2500)return;
-      const best=rankedPublicRooms(now).find(ad=>now-ad.seen<4500&&(ad.humans>1||ad.room.localeCompare(autoRoomId)<0));
-      if(best)joinPublicCandidate(best)
-    }
-    function handleDirectoryMessage(m,peerId){
-      if(!m||typeof m!=='object')return;
-      if(m.t==='find'){advertisePublicRoom(peerId);return}
-      if(m.t!=='ad'||m.protocol!==NET_PROTOCOL)return;const room=cleanRoom(m.room);if(!room||!room.startsWith('PUB-'))return;
-      const old=publicCandidates.get(room),term=Number.isSafeInteger(m.term)?m.term:0;
-      if(old&&performance.now()-old.seen<=12000&&(term<old.term||(old.peerId===peerId&&term===old.term&&m.seq<=old.seq)))return;
-      if(m.available===false){if(!old||old.peerId===peerId||term>old.term)publicCandidates.delete(room);return}
-      const max=clamp(Math.floor(+m.max||2),2,6),humans=clamp(Math.floor(+(m.humans??m.players)||1),1,max),open=clamp(Math.floor(+m.open||0),0,max-humans),now=performance.now();
-      publicCandidates.set(room,{room,humans,max,open,available:true,peerId,term,seq:m.seq||0,seen:now});if(publicMatchPending&&firstDirectoryAt<0)firstDirectoryAt=now
-    }
-    async function ensurePublicDirectory(){
-      if(directoryRoom)return directoryRoom;if(directoryLoading)return directoryLoading;const generation=directoryGeneration;
-      const pending=(async()=>{
-        const mod=await loadPeerModule();if(generation!==directoryGeneration)return null;
-        const room=mod.joinRoom({appId:'grid-infinito-lightcycles-v7',rtcConfig},'GRID-INFINITY-PUBLIC-DIRECTORY-V4',{onJoinError:()=>{if(generation===directoryGeneration)setConn('Discovery reconnecting…')}});
-        directoryRoom=room;directoryAction=room.makeAction('rooms-v3');const valid=()=>generation===directoryGeneration&&directoryRoom===room;
-        directoryAction.onMessage=(data,{peerId})=>{if(valid())handleDirectoryMessage(data,peerId)};
-        room.onPeerJoin=peerId=>{if(!valid())return;if(firstDirectoryAt<0)firstDirectoryAt=performance.now();sendDirectory({t:'find'},peerId);advertisePublicRoom(peerId)};
-        room.onPeerLeave=peerId=>{if(valid())for(const [id,ad] of publicCandidates)if(ad.peerId===peerId)publicCandidates.delete(id)};
-        return room
-      })();directoryLoading=pending;try{return await pending}finally{if(directoryLoading===pending)directoryLoading=null}
-    }
-    async function startPublicAdvertising(){try{await ensurePublicDirectory();advertisePublicRoom();sendDirectory({t:'find'})}catch{setConn('Room active · discovery reconnecting')}}
-    async function matchPublicRoom(){
-      if(publicMatchPending)return;setOnlineLoading(true);publicJoinMode='match';publicMatchPending=true;matchStartedAt=performance.now();firstDirectoryAt=-1;lastProbeAt=-Infinity;setConn('Finding active riders…');
-      try{await ensurePublicDirectory();if(publicMatchPending){sendDirectory({t:'find'});finishPublicMatch()}}catch{if(publicMatchPending){stopPublicSearch();setOnlineLoading(false);setConn('Discovery unavailable · try Find match again')}}
-    }
+    function advertisePublicRoom(target=null,available=true){if(available&&isHost)autoRoom?.refresh?.()}
+    function stopPublicSearch(){publicMatchPending=false}
+    function closePublicDirectory(){stopPublicSearch()}
+    function startPublicAdvertising(){autoRoom?.refresh?.()}
+    async function matchPublicRoom(){if(publicMatchPending)return;publicJoinMode='match';return joinAutoRoom('',true,{match:true})}
     function autoPeerByNetwork(peerId){return[...hostPeers.values()].find(p=>p.peerId===peerId)}
     function sendPresence(){if(!autoAction)return;lastPresenceAt=performance.now();autoAction.send({t:'presence',visible:!document.hidden}).catch(()=>{})}
     function becomeAutoGuest(host,term=hostTerm){
@@ -651,32 +652,18 @@
       autoHostPeer=host;hostTerm=term;isHost=false;lastHostAt=performance.now();state.mode='guest';state.running=false;resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;
       setConn('Host found · syncing grid…');netSend({t:'hello',name:cleanName($('#playerName').value)})
     }
-    function becomeAutoHost(){
+    function becomeAutoHost(roomOptions=null){
       if(autoHostPeer&&autoHostPeer!==autoSelf)return;if(isHost&&state.mode==='host'&&state.running)return;
-      const roomOptions=state.mode==='guest'&&state.cycles.length?{aiCount:state.aiCount,maxHumans:state.maxHumans,clearTrailsOnCrash:state.clearTrailsOnCrash}:null;
+      roomOptions ||= state.mode==='guest'&&state.cycles.length?{aiCount:state.aiCount,maxHumans:state.maxHumans,clearTrailsOnCrash:state.clearTrailsOnCrash}:null;
       clearTimeout(autoConnectTimer);autoHostPeer=autoSelf;isHost=true;hostPeers.clear();roomReadyAt=lastHostAt=performance.now();beginHostRoom(roomOptions);setOnlineLoading(false);state.roomId=autoRoomId;closeNetwork();setConn('Room active · you are the host');
       netSend({t:'host',host:autoSelf,term:hostTerm});sendPresence();if(autoIsPublic)startPublicAdvertising();showToast('Room active · invite link ready')
-    }
-    function visibleSuccessor(now=performance.now()){
-      return roomPeerIds().filter(id=>(!isHost||autoPeerByNetwork(id))&&id!==autoHostPeer&&peerStatus.get(id)?.visible&&now-peerStatus.get(id).seen<6000).sort()[0]
-    }
-    function handoffHiddenHost(){
-      if(!isHost||!document.hidden)return false;const next=visibleSuccessor();if(!next)return false;
-      const term=hostTerm+1;advertisePublicRoom();netSend({t:'handoff',host:next,term});becomeAutoGuest(next,term);return true
     }
     function removeAutoPeer(peerId){snapshotOutbox.delete(peerId);peerStatus.delete(peerId);const p=autoPeerByNetwork(peerId);if(!p)return;hostPeers.delete(p.id);state.walls=state.walls.filter(w=>w.owner!==p.id);state.wallRevision++;state.cycles=state.cycles.filter(c=>c.id!==p.id);state.leaderSig='';announcePresence('leave',p);sendInit();advertisePublicRoom()}
     function handleAutoMessage(m,peerId){
       if(!m||typeof m!=='object')return;
-      if(m.t==='presence'){peerStatus.set(peerId,{visible:m.visible!==false,seen:performance.now()});handoffHiddenHost();return}
-      if(m.t==='handoff'){
-        if(peerId!==autoHostPeer||!Number.isSafeInteger(m.term)||m.term<=hostTerm||!(m.host===autoSelf||roomPeerIds().includes(m.host)))return;
-        hostTerm=m.term;if(m.host===autoSelf){autoHostPeer=autoSelf;becomeAutoHost()}else becomeAutoGuest(m.host,m.term);return
-      }
-      if(m.t==='host'){
-        if(m.host!==peerId||!Number.isSafeInteger(m.term)||m.term<hostTerm)return;
-        if(m.term===hostTerm&&autoHostPeer&&autoHostPeer!==m.host&&String(autoHostPeer)<String(m.host)){if(isHost)netSend({t:'host',host:autoSelf,term:hostTerm},peerId);return}
-        lastHostAt=performance.now();becomeAutoGuest(m.host,m.term);return
-      }
+      if(m.t==='presence'){peerStatus.set(peerId,{visible:m.visible!==false,seen:performance.now()});return}
+      if(m.t==='handoff')return;
+      if(m.t==='host'){if(peerId===autoHostPeer&&m.host===autoHostPeer&&m.term===hostTerm)lastHostAt=performance.now();return}
       if(m.t==='probe'){if(isHost)netSend({t:'host',host:autoSelf,term:hostTerm},peerId);sendPresence();return}
       if(m.t==='full'&&!isHost){
         if(peerId!==autoHostPeer)return;failedRooms.set(autoRoomId,performance.now()+20000);showToast('Room full · finding another grid');
@@ -693,53 +680,40 @@
         if(peer)handleNet(m,peer)
       }else if(peerId===autoHostPeer){if(m.t==='snap'||m.t==='init')lastHostAt=performance.now();handleNet(m,null);if(m.t==='init')closeNetwork()}
     }
-    function retryPublicJoin(){
-      failedRooms.set(autoRoomId,performance.now()+20000);roomGeneration++;if(autoRoom)try{autoRoom.leave()}catch{}autoRoom=autoAction=null;autoHostPeer='';isHost=false;state.running=false;state.mode='connecting';stopPublicSearch();matchPublicRoom()
-    }
+    function retryPublicJoin(){failedRooms.set(autoRoomId,performance.now()+20000);stopPublicSearch();return matchPublicRoom()}
     async function joinAutoRoom(roomId,isPublic=false,options={}){
-      advertisePublicRoom(null,false);const generation=++roomGeneration;stopPublicSearch();snapshotOutbox.clear();setOnlineLoading(true);state.running=false;state.mode='connecting';resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;
-      if(autoRoom)try{autoRoom.leave()}catch{}autoRoom=autoAction=null;clearTimeout(autoConnectTimer);hostPeers.clear();peerStatus.clear();autoHostPeer='';hostTerm=0;isHost=false;autoIsPublic=!!isPublic;
-      autoRoomId=cleanRoom(roomId)||(isPublic?'PUB-'+randomRoomPart(6):'PRI-'+randomRoomPart(10));state.roomId=autoRoomId;knownRoom=!!options.expected;roomJoinedAt=performance.now();joinDeadline=roomJoinedAt+(options.create?1400:knownRoom?8500:6500);lastPresenceAt=lastProbeAt=-Infinity;
-      if(isPublic)setPublicInvite(autoRoomId);else{closePublicDirectory();setPrivateInvite(autoRoomId)}setConn('Connecting to riders…');
+      const generation=++roomGeneration,previous=autoRoom;autoRoom=autoAction=null;previous?.leave();snapshotOutbox.clear();setOnlineLoading(true);publicMatchPending=!!options.match;
+      state.running=false;state.mode='connecting';resetChat();resetGuestPrediction();$('#chatBtn').disabled=true;$('#aiRange').disabled=true;$('#maxRange').disabled=true;$('#clearTrailsToggle').disabled=true;
+      hostPeers.clear();peerStatus.clear();autoHostPeer='';hostTerm=0;isHost=false;autoIsPublic=!!isPublic;autoRoomId='';roomJoinedAt=performance.now();lastPresenceAt=-Infinity;
+      const identity=cloudIdentity();autoSelf=identity.peerId;
+      setConn(options.match?'Finding a public room…':'Connecting to your room…');
+      const body={room:roomId||undefined,public:!!isPublic,match:!!options.match,protocol:NET_PROTOCOL,capacity:storedInt('grid-max-humans',4,2,6),ai:storedInt('grid-ai-count',3,0,6),clearTrails:localStorage.getItem('grid-clear-trails-on-crash')==='1',exclude:[...failedRooms].filter(([,until])=>until>performance.now()).map(([id])=>id)};
       try{
-        const mod=await loadPeerModule();if(generation!==roomGeneration)return;autoSelf=mod.selfId;roomJoinedAt=performance.now();joinDeadline=roomJoinedAt+(options.create?1400:knownRoom?8500:6500);
-        const room=mod.joinRoom({appId:'grid-infinito-lightcycles-v7',rtcConfig},autoRoomId,{onJoinError:()=>{if(generation===roomGeneration)setConn('Connection retrying…')}});
-        autoRoom=room;autoAction=room.makeAction('grid-v7');const valid=()=>generation===roomGeneration&&autoRoom===room;
+        let info;try{info=await lobbyRequest('join',body,identity)}catch(error){if(error.status||generation!==roomGeneration)throw error;info=await lobbyRequest('join',body,identity)}
+        if(generation!==roomGeneration){lobbyRequest('leave',{},identity,true).catch(()=>{});return}
+        publicMatchPending=false;autoRoomId=info.room.id;state.roomId=autoRoomId;if(isPublic)setPublicInvite(autoRoomId);else setPrivateInvite(autoRoomId);
+        const room=new CloudRoom(identity,info);autoRoom=room;autoAction=room.makeAction('grid-v8');const valid=()=>generation===roomGeneration&&autoRoom===room;
+        room.getHostSettings=()=>valid()&&isHost?{term:hostTerm,capacity:state.maxHumans,ai:state.aiCount,clearTrails:state.clearTrailsOnCrash,admitted:[autoSelf,...hostPeers.values()].map(p=>typeof p==='string'?p:p.peerId)}:undefined;
+        room.onAuthority=r=>{if(!valid()||r.term<hostTerm)return;const rules={aiCount:r.ai,maxHumans:r.capacity,clearTrailsOnCrash:!!r.clear_trails};
+          if(r.host===autoSelf){hostTerm=r.term;autoHostPeer=autoSelf;becomeAutoHost(rules)}else becomeAutoGuest(r.host,r.term)};
         autoAction.onMessage=(data,{peerId})=>{if(valid())handleAutoMessage(data,peerId)};
-        room.onPeerJoin=peerId=>{if(!valid())return;sendPresence();if(isHost)netSend({t:'host',host:autoSelf,term:hostTerm},peerId);else netSend({t:'probe'},peerId)};
-        room.onPeerLeave=peerId=>{if(!valid())return;peerStatus.delete(peerId);if(isHost)removeAutoPeer(peerId);else if(peerId===autoHostPeer){state.running=false;resetGuestPrediction();$('#chatBtn').disabled=true;lastHostAt=performance.now()-7000;setConn('Reconnecting to the room…')}};
-        netSend({t:'probe'});sendPresence();if(isPublic)startPublicAdvertising()
-      }catch(e){if(generation===roomGeneration){setOnlineLoading(false);setConn('Connection unavailable · try Find match again')}}
+        room.onPeerJoin=peerId=>{if(!valid())return;sendPresence();if(isHost)netSend({t:'host',host:autoSelf,term:hostTerm},peerId);else{netSend({t:'probe'},peerId);if(peerId===autoHostPeer)netSend({t:'hello',name:cleanName($('#playerName').value)},peerId)}};
+        room.onPeerLeave=peerId=>{if(!valid())return;peerStatus.delete(peerId);if(isHost)removeAutoPeer(peerId);else if(peerId===autoHostPeer){state.running=false;resetGuestPrediction();$('#chatBtn').disabled=true;setConn('Reconnecting to the room…');room.refresh()}};
+        room.onFailure=(status,message)=>{if(!valid())return;if(status===410){const id=autoRoomId;setConn('Restoring your room…');joinAutoRoom(id,autoIsPublic);return}setConn(message||'Connection retrying…');if(performance.now()-roomJoinedAt>16000)setOnlineLoading(false)};
+        room.start()
+      }catch(error){if(generation!==roomGeneration)return;publicMatchPending=false;setOnlineLoading(false);lobbyRequest('leave',{},identity,true).catch(()=>{});setConn(error.status===409?'Room full · try Find match':error.message||'Online service unavailable · try again');showToast(error.status===426?'Game updated · reload this page':'Could not connect · try again')}
     }
     function networkMaintenance(now=performance.now()){
-      if(now-lastMaintenance<200)return;lastMaintenance=now;
-      if(directoryAction){
-        if(isHost&&now-lastAdAt>=1100)advertisePublicRoom();
-        if((publicMatchPending||(isHost&&autoIsPublic&&publicJoinMode==='match'&&!hostPeers.size))&&!document.hidden&&now-lastProbeAt>=900){lastProbeAt=now;sendDirectory({t:'find'})}
-        finishPublicMatch(now);consolidatePublicRoom(now)
-      }
-      if(!autoRoom||!autoAction)return;
-      if(now-lastPresenceAt>=1200)sendPresence();
-      if(isHost){handoffHiddenHost();return}
-      if(!autoHostPeer){
-        if(now-lastProbeAt>1000){lastProbeAt=now;netSend({t:'probe'})}
-        if(!document.hidden&&now>=joinDeadline){if(knownRoom&&publicJoinMode==='match')retryPublicJoin();else becomeAutoHost()}return
-      }
-      if(!state.running&&now-lastRecoveryAt>1200){lastRecoveryAt=now;netSend({t:'hello',name:cleanName($('#playerName').value)})}
+      if(now-lastMaintenance<200)return;lastMaintenance=now;if(!autoRoom||!autoAction)return;
+      if(now-lastPresenceAt>=1200)sendPresence();if(isHost)return;
+      if(!state.running&&now-lastRecoveryAt>1500){lastRecoveryAt=now;netSend({t:'hello',name:cleanName($('#playerName').value)})}
       if(document.hidden)return;
-      const silence=now-lastHostAt;
-      if(silence>3000&&now-lastRecoveryAt>1500){lastRecoveryAt=now;setConn('Host reconnecting…');netSend({t:'resync'});netSend({t:'probe'})}
-      if(silence>9000){
-        const successor=[autoSelf,...roomPeerIds().filter(id=>id!==autoHostPeer&&peerStatus.get(id)?.visible&&now-peerStatus.get(id).seen<6000)].sort()[0];
-        if(successor===autoSelf){hostTerm++;autoHostPeer=autoSelf;becomeAutoHost();showToast('Connection restored · new host')}
-      }
+      if(now-lastHostAt>3000&&now-lastRecoveryAt>1500){lastRecoveryAt=now;netSend({t:'resync'});netSend({t:'probe'});autoRoom.refresh()}
+      if(!state.running&&now-roomJoinedAt>16000){setOnlineLoading(false);setConn('Room found · peer connection blocked or delayed. Try another network.')}
     }
     function recoverVisiblePage(){
-      const now=performance.now();state.simLast=now;state.accum=0;sendPresence();
-      if(document.hidden){advertisePublicRoom();handoffHiddenHost();return}
-      if(publicMatchPending){matchStartedAt=now;firstDirectoryAt=-1;lastProbeAt=-Infinity}
-      if(autoIsPublic){startPublicAdvertising();sendDirectory({t:'find'});lastProbeAt=now}
-      if(state.mode==='guest'&&autoHostPeer){resetGuestPrediction();lastHostAt=now;netSend({t:'resync'});netSend({t:'probe'})}
+      const now=performance.now();state.simLast=now;state.accum=0;sendPresence();autoRoom?.refresh?.();
+      if(!document.hidden&&state.mode==='guest'&&autoHostPeer){resetGuestPrediction();lastHostAt=now;netSend({t:'resync'});netSend({t:'probe'})}
       lastMaintenance=-Infinity;networkMaintenance(now)
     }
     function setConn(s){$('#connState').textContent=s}
@@ -839,6 +813,7 @@
     const touchBrakePointers=new Set;canvas.addEventListener('pointerdown',e=>{const touchDevice=matchMedia('(pointer:coarse)').matches||navigator.maxTouchPoints>0;if(!touchDevice||!document.body.classList.contains('playing')||$('#chatCompose').classList.contains('open'))return;e.preventDefault();const inBrakeBand=e.clientY>=innerHeight*.83,inBrakeCenter=Math.abs(e.clientX/innerWidth-.5)<=.19;if(inBrakeBand&&inBrakeCenter){touchBrakePointers.add(e.pointerId);canvas.setPointerCapture?.(e.pointerId);playerAction('brake',true)}else playerAction(e.clientX<innerWidth/2?'left':'right')});for(const ev of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(ev,e=>{if(touchBrakePointers.delete(e.pointerId)&&!touchBrakePointers.size)playerAction('brake',false)});
     setInterval(()=>{if(document.hidden&&isHost)advanceGameClock(performance.now());networkMaintenance()},250);
     document.addEventListener('visibilitychange',recoverVisiblePage);addEventListener('pageshow',recoverVisiblePage);addEventListener('online',recoverVisiblePage);
+    addEventListener('pagehide',e=>{if(!e.persisted)autoRoom?.leave()});
     addEventListener('contextmenu',e=>e.preventDefault());
     addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('#installBtn').hidden=false});$('#installBtn').onclick=async()=>{if(!installPrompt)return;await installPrompt.prompt();installPrompt=null;$('#installBtn').hidden=true};if('serviceWorker'in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('/sw.js').catch(()=>{});
     (()=>{const p=new URLSearchParams(location.hash.slice(1));if(p.get('auto')==='1'&&p.get('room')){const code=cleanRoom(p.get('room')),isPublic=p.get('public')==='1';openNetwork();if(isPublic){setPublicInvite(code);publicInviteLink=location.href;selectFlow('public');publicJoinMode='direct';setConn('Public invite found · joining automatically…');joinAutoRoom(code,true)}else{setPrivateInvite(code);privateInviteLink=location.href;selectFlow('private');publicJoinMode='';setConn('Private invite found · joining automatically…');joinAutoRoom(code,false)}}})();

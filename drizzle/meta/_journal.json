@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788694940824,
+      "tag": "0000_tense_karen_page",
+      "breakpoints": true
+    }
+  ]
+}

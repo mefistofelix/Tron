@@ -1,0 +1,14 @@
+{
+  "name": "grid-infinity-tron",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build-worker.mjs",
+    "db:generate": "drizzle-kit generate",
+    "test": "node tests/regression.mjs && node tests/discovery-spawn-audio.mjs && node tests/cloud-lobby.mjs"
+  },
+  "devDependencies": {
+    "drizzle-kit": "0.31.10",
+    "drizzle-orm": "0.45.2"
+  }
+}
